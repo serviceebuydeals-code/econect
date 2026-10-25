@@ -1,0 +1,81 @@
+# eConect
+
+A social community app with a public feed, member profiles, messaging, reality TV, voting, and eCoin wallets. This repository targets **your own Cloudflare Workers account**, with D1 and R2. It does not require ChatGPT sign-in.
+
+## Current implementation
+
+- Email/password registration and login, hashed passwords, secure session cookies, logout, login throttling, and optional password-reset email through Resend.
+- Profiles and compressed photos; one-minute feed video uploads with browser compression to below 5 MB. Some browsers cannot transcode; those users must supply a file already below the limit.
+- Feed, comments/replies, one-time likes, and engagement points.
+- **2 eCoin (200 points) non-withdrawable signup bonus**, awarded once when the profile is completed. Withdrawable and bonus balances are separate. Bonus-funded gifts and conversation payments remain bonus for the recipient; bonus is spent first.
+- Wallet top-ups and gifts through configured bank transfers; credit happens after administrator confirmation. Wallet-funded gifts are also supported.
+- **Voting requires a new bank payment**; wallet credit and signup bonus cannot be used. A confirmed vote credits the contestant and appears in recent voters.
+- Admin-controlled logo, favicon, bank details, contestants, and up to 10 TV episodes (10 minutes each). Episode sharing includes poster metadata.
+- Conversation text billing (4 points / 1,000 messages), voice notes (4 points / started minute), and WebRTC calls (4 points / started minute).
+
+## Deployment status and limits
+
+The code builds and passes accounting/authentication tests. It has **not yet been deployed to the owner's Cloudflare account**. Existing hosted data/media have not been exported or imported. A fresh D1 database starts empty.
+
+The wallet labels an eligible balance as withdrawable; **cash withdrawal/payout processing is not implemented**. Bank verification is manual, not a connected payment gateway. Calls currently use polling-based signaling and a public STUN server; production reliability needs a TURN service and two-device testing. Background call ringing/push notifications and end-to-end encryption are not implemented. Do not market these as available yet. Email verification for ordinary accounts is not implemented; an admin account requires an additional private setup key. Location dropdowns cover selected countries/regions and offer manual entry for missing locations.
+
+## Prerequisites
+
+Node.js 22 or newer, a Cloudflare account with Workers/D1/R2 enabled, and this GitHub repository connected to Cloudflare. Use **Workers**, not a static-only Pages deployment.
+
+## Local checks
+
+```sh
+npm ci
+npm test
+npm run check
+npm run build
+```
+
+For local API development, create `.dev.vars` (ignored by Git) with `ADMIN_EMAIL`, `ADMIN_SETUP_KEY`, and optional email settings. Run `npm run db:local`, then `npm run dev`. The local frontend uses the Worker, not the old Sites preview.
+
+## Cloudflare setup
+
+1. Create D1 database `econect-db` and R2 bucket `econect-media` in Cloudflare. Keep the R2 bucket private: media is served through authenticated/public app routes as appropriate.
+2. Copy the D1 database ID into `wrangler.jsonc`, replacing the placeholder ID. The logical bindings are `DB` and `BUCKET`.
+3. Set `ADMIN_EMAIL` to the owner's email in `wrangler.jsonc` or a Cloudflare runtime override. Keep `ADMIN_SETUP_KEY` in **Cloudflare secrets**, never in GitHub. Generate a long random setup key and set it before allowing registrations.
+4. Apply the database migrations once using `npm run db:remote`. Migrations live under `drizzle/`; preserve their order. Use Cloudflare's D1 console if working without a terminal, running each SQL file in order on a new database. The Drizzle `--> statement-breakpoint` markers are comments.
+5. In Cloudflare **Workers & Pages**, create a Worker from this GitHub repository. Build command: `npm run build`. Deploy command: `npx wrangler deploy`. The `wrangler.jsonc` file describes the Worker and frontend assets. Node version: 22 or newer.
+6. Add runtime secret `ADMIN_SETUP_KEY`. Optional reset-email secret: `RESEND_API_KEY`; optional variables: `EMAIL_FROM` (verified sender) and `APP_ORIGIN` (your HTTPS site origin).
+7. Deploy and open the resulting `workers.dev` URL. Create the owner account using the configured `ADMIN_EMAIL` and the private admin setup key. Create a password in the site; do not send it in chat.
+8. Finish the profile, open **Admin studio**, set bank details and branding, then upload TV content and choose contestants.
+9. Test with a second account before enabling real payments. Connect a custom domain only after the Worker works correctly.
+
+CLI equivalents for initial resource setup:
+
+```sh
+npx wrangler login
+npx wrangler d1 create econect-db
+npx wrangler r2 bucket create econect-media
+# Edit wrangler.jsonc with the returned database ID and owner email.
+npx wrangler secret put ADMIN_SETUP_KEY
+npm run db:remote
+npm run deploy
+```
+
+Workers Builds authentication/deploy permissions are managed by Cloudflare. No Cloudflare token or GitHub token belongs in source. Do not enable real-money transactions before payment, accounting, and call settlement testing.
+
+## Existing account/data migration
+
+The previous version used Sites-specific user IDs. Do not map accounts by an unverified email or give imported accounts arbitrary passwords. Back up the old D1 database and R2 media first; then use a reviewed ID mapping and verified account-claim/reset flow. Carry over both wallet buckets and the complete ledger. This repository preserves the existing application table schema but does not perform or pretend to perform that data transfer.
+
+## Reference documentation
+
+- https://developers.cloudflare.com/workers/static-assets/
+- https://developers.cloudflare.com/workers/wrangler/configuration/
+- https://developers.cloudflare.com/d1/reference/migrations/
+
+## Main files
+
+- `app/page.tsx`, `app/globals.css`: React interface and responsive styles
+- `server/api.ts`: community, uploads, wallet, admin, and conversation APIs
+- `server/auth.ts`: independent accounts, sessions, and password reset
+- `server/worker.ts`: Worker routing, static assets, share metadata
+- `drizzle/`: ordered database migrations
+- `wrangler.jsonc`: Cloudflare resource bindings
+- `scripts/`: accounting and authentication integration tests
