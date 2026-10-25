@@ -1,0 +1,1 @@
+ALTER TABLE `ledger` ADD `bucket` text DEFAULT 'withdrawable' NOT NULL;
