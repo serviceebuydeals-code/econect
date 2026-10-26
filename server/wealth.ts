@@ -9,7 +9,7 @@ export async function wealthRoute(r:Request):Promise<Response>{try{
  const q=(s:string,...v:any[])=>db.prepare(s).bind(...v),one=(s:string,...v:any[])=>q(s,...v).first<any>(),all=async(s:string,...v:any[])=>(await q(s,...v).all()).results;
  const guard=async()=>{if(!uid)fail('Please log in to continue.',401);if(!await one('SELECT id FROM profiles WHERE id=?',uid))fail('Create your profile first.',403)};
  if(r.method==='GET'){
-  if(path==='config')return Response.json({coinPrice:await getCoinPrice(db),packs,termDays:180,interestPercent:10,cashoutFeePercent:5,earlyCashout:true});
+  if(path==='config')return Response.json({coinPrice:await getCoinPrice(db),packs,termDays:180,interestPercent:15,cashoutFeePercent:5,earlyCashout:true});
   await guard();
   if(path==='investments')return Response.json({now:Date.now(),investments:await all('SELECT * FROM investments WHERE user=? ORDER BY created DESC,rowid DESC',uid)});
   if(path==='admin'){if(!auth?.isAdmin)fail('Admin only.',403);return Response.json({now:Date.now(),investments:await all('SELECT i.*,p.username,p.name FROM investments i JOIN profiles p ON p.id=i.user ORDER BY i.created DESC,i.rowid DESC LIMIT 500')})}
@@ -26,7 +26,7 @@ export async function wealthRoute(r:Request):Promise<Response>{try{
   const existing=await one('SELECT * FROM investments WHERE id=? AND user=?',key,uid);if(existing)return Response.json(existing);
   const price=await getCoinPrice(db);if(Number(b.coinPrice)!==price)fail('The eCoin price changed. Refresh this page before continuing.',409);
   if(source==='bank'&&!await one("SELECT value FROM settings WHERE key='bank'"))fail('Payments open when the administrator adds bank details.');
-  await q('INSERT INTO investments(id,user,coins,principal_points,interest_points,unit_price,amount_ngn,source) VALUES(?,?,?,?,?,?,?,?)',key,uid,coins,coins*100,coins*10,price,coinAmount(coins,price),source).run();
+  await q('INSERT INTO investments(id,user,coins,principal_points,interest_points,unit_price,amount_ngn,source) VALUES(?,?,?,?,?,?,?,?)',key,uid,coins,coins*100,coins*15,price,coinAmount(coins,price),source).run();
   return Response.json(await one('SELECT * FROM investments WHERE id=? AND user=?',key,uid));
  }
  if(path==='payment-sent'){

@@ -131,3 +131,7 @@ SQLite triggers reserve, refund and credit funds atomically with status transiti
 This implements an internal eCoin ledger plan. No external investment portfolio, brokerage, yield source, bank withdrawal or automatic payment-verification provider is connected. The operator must fund any real-money liabilities represented by eCoin. Live Cloudflare deployment and account/device checks remain to be verified.
 
 Validation: TypeScript, Vite production build, social/auth/marketplace tests, new pricing/investment tests, and Wrangler dry-run. Tests cover price permissions and existing quote preservation, bonus exclusion, principal reservation/refund, 180-day timing, early/mature payout math, concurrent cashout retries, private records, large packages and bank-payment lifecycle.
+
+## Current investment rate: 15% for new investments
+
+Migration 0006 preserves existing investment records and their agreed 10% interest, while enabling the new 15% plan. New investments now store 15 interest points per invested eCoin. The 180-day term and 5% cashout fee remain unchanged. Early cashout pays principal less 5%, without interest. At maturity, 1 eCoin pays 115 − 5.75 = 109.25 points (1.0925 eCoin) after the fee. Investment history, payout calculations and ledger labels use each record's stored rate. Tests cover both new 15% and migrated 10% investments.
