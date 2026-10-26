@@ -104,3 +104,30 @@ The deployment script now builds, applies pending remote D1 migrations, then dep
 Validation: `npm run check`, `npm run build`, `npm test` and a Wrangler deployment dry-run. Marketplace tests cover accounting rollback/idempotency, zero-balance requests, catalogue search beyond the 600-item window, private requests, shop organization, promotion confirmation and the daily ad cap. Live Cloudflare deployment, live payments and browser/device verification still require checking the deployed site.
 
 Promotions automatically stop qualifying for sponsored placements at their exact stored expiry timestamp. The expiry test runs on every ad selection; it does not depend on a scheduled job or administrator action. The owner's campaign history shows expired campaigns as Ended. Automated tests verify that expired campaigns return no ad and create no impression.
+
+
+## Admin eCoin pricing and Grow Your Wealth
+
+Migration `0005_wealth_and_pricing.sql` is applied by the existing `npm run deploy` command. Keep that as the Workers Builds deployment command.
+
+Admin studio → Settings sets the NGN price of 1 eCoin (default ₦1,500). One eCoin remains 100 points. New top-ups, gifts, votes, promotion bank payments and investment payments use this base price. Quoted bank payments retain their saved NGN amount after price changes. Stale client prices are rejected before creating new payment requests.
+
+Grow Your Wealth appears immediately after Marketplace. Investment packages are 1, 2, 4, 8, 15, 30, 50, 100, 200, 400, 800, 1,500, 3,000, 5,000, 10,000 and 20,000 eCoin.
+
+Both payment sources create a pending investment. A wallet investment reserves principal from the withdrawable balance only; bonus eCoin cannot be invested. Direct payment uses existing bank-transfer settings and an investment-specific reference. Admin studio → Investments confirms or rejects pending investments. Confirmation begins the 180-day term; rejecting a wallet investment refunds its principal exactly once.
+
+The user selected early cashout:
+- Before 180 days: principal minus a 5% fee; no interest.
+- At/after 180 days: principal plus 10% interest, minus a 5% fee on that combined amount.
+- Cashout credits the owner's withdrawable eConect wallet and closes the investment.
+- Example for 1 eCoin: early cashout credits 95 points (0.95 eCoin); mature cashout credits 104.5 points (1.045 eCoin): 100 principal + 10 interest − 5.5 fee.
+
+Fractional points are retained for these calculations and displayed in balances. SQLite's existing non-strict INTEGER balance/ledger columns accept fractional numeric values.
+
+Tracking views show Successful (confirmed, before maturity), Pending (unconfirmed and rejected, clearly labeled), Completed (180 days reached, awaiting cashout), and Cashout (credited and closed). Countdown uses the server timestamp. Maturity is calculated on reads/cashout and does not depend on a daily job.
+
+SQLite triggers reserve, refund and credit funds atomically with status transitions. Server-side rules enforce amounts. Per-investment ledger IDs and guarded status changes prevent duplicate cashouts or refunds.
+
+This implements an internal eCoin ledger plan. No external investment portfolio, brokerage, yield source, bank withdrawal or automatic payment-verification provider is connected. The operator must fund any real-money liabilities represented by eCoin. Live Cloudflare deployment and account/device checks remain to be verified.
+
+Validation: TypeScript, Vite production build, social/auth/marketplace tests, new pricing/investment tests, and Wrangler dry-run. Tests cover price permissions and existing quote preservation, bonus exclusion, principal reservation/refund, 180-day timing, early/mature payout math, concurrent cashout retries, private records, large packages and bank-payment lifecycle.
