@@ -79,3 +79,28 @@ The previous version used Sites-specific user IDs. Do not map accounts by an unv
 - `drizzle/`: ordered database migrations
 - `wrangler.jsonc`: Cloudflare resource bindings
 - `scripts/`: accounting and authentication integration tests
+
+
+## Marketplace, shops and promotion update
+
+Apply `drizzle/0004_marketplace.sql` before using marketplace routes. For Workers Builds, set the deploy command to:
+
+```sh
+npm run deploy
+```
+
+The deployment script now builds, applies pending remote D1 migrations, then deploys the Worker. The existing build command can remain `npm run build`. Keep D1, R2 and runtime secrets configured as before. No private configuration is added to source.
+
+- Public Marketplace navigation appears after Home. The initial listing contains the newest 600 active products. Search spans all products by name, category, subcategory and description, with pagination. Shops paginate their complete catalogue.
+- Authenticated sellers upload 1–10 photos using the existing image compressor, plus name, NGN price, location and description. The server selects an existing main category from keyword rules if none is selected, and creates a subcategory from the product name when needed. This is a simple heuristic, not an AI classifier. Admin studio → Marketplace adds main/subcategories.
+- Each successful listing costs 20 points, atomically debited bonus-first by a SQLite trigger with matching wallet ledger entries. Retrying the same listing ID cannot charge twice.
+- Buy sends a free product request, visible in both accounts under marketplace requests and Notifications. It does not purchase the item or charge the buyer. Either party can start a conversation; the existing conversation starter remains its payer. Starting a new conversation requires at least 4 points. Product checkout, escrow, shipping and order fulfilment are not implemented.
+- Profiles with active products have a visible Visit shop button. Shop folders only organize that seller's catalogue; they do not change public marketplace categories. Each folder uses its newest active product photo. Public /shop/username links render Open Graph metadata using the newest active product photo; social networks may cache previews.
+- Shop promotion: 8 eCoin / 3 days, 15 / 7 days, 30 / 30 days. Product promotion: 2 / 3 days, 4 / 7 days, 8 / 30 days. Wallet payment is atomic and activates immediately. Direct payment uses existing bank details; it activates only after manual administrator bank verification in Admin studio → Marketplace. No external gateway or webhook is connected.
+- Active campaigns may appear as labeled sponsored cards during up to 20 feed pages (20 posts each), with a server-enforced aggregate cap of 3 sponsored placements per signed-in member per Lagos calendar day. Actual delivery depends on available members, feed browsing and live campaigns; impressions or sales are not guaranteed.
+- Product-category personalization and on-site retargeting are opt-in. Recommendations use interest signals from the last 90 days. Disabling personalization deletes saved interests. General ads are used otherwise. There is no third-party pixel, cross-site identifier or advertising-provider integration.
+- Logged-out homepage search is hidden. Signed-in homepage search queries the database for profile names, usernames, post text/captions and hashtags rather than filtering only the bootstrap window.
+
+Validation: `npm run check`, `npm run build`, `npm test` and a Wrangler deployment dry-run. Marketplace tests cover accounting rollback/idempotency, zero-balance requests, catalogue search beyond the 600-item window, private requests, shop organization, promotion confirmation and the daily ad cap. Live Cloudflare deployment, live payments and browser/device verification still require checking the deployed site.
+
+Promotions automatically stop qualifying for sponsored placements at their exact stored expiry timestamp. The expiry test runs on every ad selection; it does not depend on a scheduled job or administrator action. The owner's campaign history shows expired campaigns as Ended. Automated tests verify that expired campaigns return no ad and create no impression.
