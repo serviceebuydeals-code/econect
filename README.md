@@ -161,3 +161,16 @@ Create Account has an optional referral code. New usernames and codes are checke
 Whenever a referred user's direct eCoin purchase is confirmed during an active eligibility period, the referrer receives 5% of purchased eCoin as withdrawable points. The buyer or gift/vote recipient still receives the full purchased amount. Eligible direct purchases include top-ups, gifts, votes and direct-bank investment purchases. Investing or spending existing wallet funds, bank promotion service payments, pending/rejected payments and purchases confirmed while the code is inactive do not earn referral rewards. Rewards are recorded once per confirmed transaction, atomically with confirmation and with a wallet ledger entry.
 
 Validation: TypeScript, Vite production build, social/auth/marketplace/investment/withdrawal/referral tests and Wrangler dry-run. Tests cover case-insensitive names, optional active-code signup, admin authorization/date windows, exact 5% independent of buyer balance, duplicate confirmations, expiry/reactivation and wallet-spending exclusion. Live Cloudflare migration and end-to-end checks are still required.
+
+
+## Shop phone and product messages
+
+Migration `0010_shop_phone_chat_media.sql` is applied by the existing `npm run deploy` command. Shop owners can set, edit or remove a phone number in Marketplace → My shop; the number is publicly visible to customers on that shop.
+
+Marketplace cards and product pages have View shop and Buy now. Buy now creates or reuses a private conversation and sends a product snapshot as a free inquiry, even when the buyer has zero points. Both participants can see the preview; either may start the conversation. The member who starts pays the existing text/call/voice conversation charges. Repeated requests reuse the inquiry and do not duplicate the same preview in that conversation. Active conversations are reused.
+
+Conversation participants can attach one photo or video per message. The sender pays 1 point for a photo and 4 points for a video; the other participant receives the same amount. Bonus points are spent first and remain non-withdrawable for the recipient. Each transfer and message is atomic and retries use an idempotency key. The starter must retain enough points to settle accrued text/voice charges. Photos use the existing compression limit below 500 KB; videos use the existing one-minute and below-5-MB limits.
+
+Attachments are stored as private R2 objects and served only to participants after a matching message is sent. Upload records bind each file to its uploader, conversation and media type. Product snapshots use the existing public product images. This is not end-to-end encryption.
+
+Validation: TypeScript, production build, the existing social/auth/marketplace/investment/withdrawal/referral tests, dedicated shop/chat accounting/privacy tests, and Wrangler dry-run. Tests cover phone editing, free zero-balance inquiries, either participant starting, active-conversation reuse, attachment authorization, exact point transfers, bonus preservation, idempotency and accrued-charge protection. Live Cloudflare and two-device browser testing remain necessary.

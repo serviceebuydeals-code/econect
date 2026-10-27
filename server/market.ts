@@ -9,7 +9,7 @@ export async function marketRoute(r:Request):Promise<Response>{try{
  const db=env.DB,url=new URL(r.url),path=url.pathname.slice('/api/market/'.length),auth=await getUser(r),uid=auth?.userId;
  const q=(s:string,...v:any[])=>db.prepare(s).bind(...v),one=(s:string,...v:any[])=>q(s,...v).first<any>(),all=async(s:string,...v:any[])=>(await q(s,...v).all()).results;
  const guard=async()=>{if(!uid)error('Please log in to continue.',401);if(!await one('SELECT id FROM profiles WHERE id=?',uid))error('Create your profile first.',403)};
- const productSQL='SELECT m.*,p.username,p.name seller_name,p.avatar,c.name category_name,s.name subcategory_name FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory';
+ const productSQL='SELECT m.*,p.username,p.name seller_name,p.avatar,c.name category_name,s.name subcategory_name,COALESCE(sh.phone,\'\') shop_phone FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory LEFT JOIN market_shops sh ON sh.seller=m.seller';
  if(r.method==='GET'){
   if(path==='categories')return Response.json(await all('SELECT * FROM market_categories ORDER BY admin_created DESC,name'));
   if(path==='products'){
@@ -19,7 +19,7 @@ export async function marketRoute(r:Request):Promise<Response>{try{
    const where=' WHERE '+clauses.join(' AND '),limit=shop||term?60:600,offset=shop||term?page*limit:0;
    const products=await all(productSQL+where+' ORDER BY m.created DESC,m.rowid DESC LIMIT ? OFFSET ?',...args,limit,offset);
    const count=await one('SELECT count(*) total FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory'+where,...args);
-   const owner=shop?await one('SELECT id,username,name,surname,avatar,bio FROM profiles WHERE username=? COLLATE NOCASE',shop):null;
+   const owner=shop?await one('SELECT p.id,p.username,p.name,p.surname,p.avatar,p.bio,COALESCE(s.phone,\'\') phone FROM profiles p LEFT JOIN market_shops s ON s.seller=p.id WHERE p.username=? COLLATE NOCASE',shop):null;
    return Response.json({products,total:count.total,hasMore:!!(shop||term)&&offset+products.length<count.total,owner,folders:owner?await all("SELECT f.*,(SELECT images FROM market_products WHERE folder=f.id AND active=1 ORDER BY created DESC,rowid DESC LIMIT 1) images FROM market_folders f WHERE seller=? ORDER BY created DESC",owner.id):[]});
   }
   if(path==='product'){const p=await one(productSQL+' WHERE m.id=? AND m.active=1',url.searchParams.get('id'));if(!p)error('Product unavailable.',404);return Response.json(p)}
@@ -47,7 +47,18 @@ export async function marketRoute(r:Request):Promise<Response>{try{
   if(!subcategory){const nameSub=clean(b.subcategoryName,80)||name.split(/\s+/).slice(0,2).join(' ');const existing=await one('SELECT id FROM market_categories WHERE parent=? AND name=? COLLATE NOCASE',category,nameSub);subcategory=existing?.id||uuid();if(!existing)statements.push(q('INSERT INTO market_categories(id,name,parent) VALUES(?,?,?)',subcategory,nameSub,category));}
   statements.push(q('INSERT INTO market_products(id,seller,name,price,location,description,images,category,subcategory) VALUES(?,?,?,?,?,?,?,?,?)',productId,uid,name,price,location,description,JSON.stringify(images),category,subcategory));await db.batch(statements);return Response.json({id:productId});
  }
- if(path==='buy'){const p=await one('SELECT * FROM market_products WHERE id=? AND active=1',b.product);if(!p||p.seller===uid)error('Choose another member’s product.');const key=uuid();await q('INSERT OR IGNORE INTO market_requests(id,product,buyer,seller) VALUES(?,?,?,?)',key,p.id,uid,p.seller).run();return Response.json({seller:p.seller,ok:true})}
+ if(path==='buy'){
+  const p=await one('SELECT * FROM market_products WHERE id=? AND active=1',b.product);if(!p||p.seller===uid)error('Choose another member’s product.');
+  const snapshot=JSON.stringify({id:p.id,name:p.name,price:p.price,location:p.location,image:JSON.parse(p.images||'[]')[0]||''}),conversation=uuid();
+  const conversationQuery="SELECT id FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) AND status IN('active','inquiry') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,created DESC LIMIT 1";
+  await db.batch([
+   q('INSERT OR IGNORE INTO market_requests(id,product,buyer,seller) VALUES(?,?,?,?)',uuid(),p.id,uid,p.seller),
+   q("INSERT INTO conversations(id,starter,recipient,status) SELECT ?,?,?,'inquiry' WHERE NOT EXISTS(SELECT 1 FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) AND status IN('active','inquiry'))",conversation,uid,p.seller,uid,p.seller,p.seller,uid),
+   q("INSERT OR IGNORE INTO messages(id,conversation,sender,kind,body) SELECT 'product-'||r.id||'-'||c.id,c.id,?,'product',? FROM market_requests r JOIN conversations c ON c.id=("+conversationQuery+") WHERE r.product=? AND r.buyer=?",uid,snapshot,uid,p.seller,p.seller,uid,p.id,uid)
+  ]);
+  const c=await one(conversationQuery,uid,p.seller,p.seller,uid);return Response.json({seller:p.seller,conversation:c.id,ok:true});
+ }
+ if(path==='shop-phone'){const phone=String(b.phone||'').trim();if(phone&&(!/^[+0-9 ()-]{5,30}$/.test(phone)||phone.replace(/[^0-9]/g,'').length<5))error('Enter a valid shop phone number.');await q("INSERT INTO market_shops(seller,phone) VALUES(?,?) ON CONFLICT(seller) DO UPDATE SET phone=excluded.phone,updated=CURRENT_TIMESTAMP",uid,phone).run();return Response.json({ok:true})}
  if(path==='folder'){const name=clean(b.name,80);if(!name)error('Enter a folder name.');await q('INSERT INTO market_folders(id,seller,name) VALUES(?,?,?)',uuid(),uid,name).run();return Response.json({ok:true})}
  if(path==='move'){if(b.folder&&!await one('SELECT id FROM market_folders WHERE id=? AND seller=?',b.folder,uid))error('Folder unavailable.');await q('UPDATE market_products SET folder=? WHERE id=? AND seller=?',b.folder||null,b.product,uid).run();return Response.json({ok:true})}
  if(path==='remove'){await q('UPDATE market_products SET active=0 WHERE id=? AND seller=?',b.product,uid).run();return Response.json({ok:true})}
