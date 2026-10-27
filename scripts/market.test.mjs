@@ -36,6 +36,14 @@ sqlite.prepare("UPDATE market_promotions SET ends=datetime('now','-1 second')").
 assert.equal(sqlite.prepare("SELECT count(*) n FROM market_ad_views WHERE user='carol'").get().n,0);
 assert.equal((await req('admin-category',{name:'Computers',parent:'electronics'},'bob')).status,403);assert.equal((await req('admin-category',{name:'Computers',parent:'electronics'},'admin')).status,200);
 sqlite.prepare("INSERT INTO posts(id,user,body,media) VALUES('post','alice','My new caption #SolarLife','[]')").run();assert.equal((await req('search?q=%23SolarLife')).data.posts.length,1);assert.equal((await req('search?q=alice')).data.members.length,1);assert.equal((await req('search?q=Test')).data.members.length,4);assert.equal((await req('search?q=alice',undefined,null)).status,401);
+// Suggestions include matching names and numeric usernames and require login.
+sqlite.prepare("UPDATE profiles SET username='alice123' WHERE id='alice'").run();
+assert.equal((await req('suggestions?q=ali')).data.members[0].username,'alice123');
+assert.equal((await req('suggestions?q=123')).data.members[0].username,'alice123');
+assert.equal((await req('suggestions?q=Test')).data.members.length,4);
+assert.equal((await req('suggestions?q=%25')).data.members.length,0);
+assert.equal((await req('suggestions?q=alice',undefined,null)).status,401);
+assert.equal((await req('suggestions?q=Solar')).data.posts[0].id,'post');assert.deepEqual((await req('suggestions?q=Solar')).data.hashtags,['#SolarLife']);
 // Bulk fixtures verify the 600-item window and that older products remain searchable.
 sqlite.prepare("UPDATE profiles SET balance=100000 WHERE id='alice'").run();const insert=sqlite.prepare("INSERT INTO market_products(id,seller,name,price,location,description,images,category,created) VALUES(?,'alice',?,1,'Lagos','description','[]','electronics',?)");for(let i=0;i<601;i++)insert.run('bulk'+i,'Bulk '+i,i===0?'2000-01-01 00:00:00':'2030-01-01 00:00:00');assert.equal((await req('products')).data.products.length,600);assert.equal((await req('products')).data.total,602);assert.equal((await req('products?q=Bulk%200')).data.products[0].id,'bulk0');
 console.log('PASS: marketplace permissions, CSRF, 10-photo limit, atomic/once-only 20-point listing charges, automatic categories, 600-item window and older search, free buyer requests, private requests, independent shop folders, promotion pricing and bonus-first debit, bank activation/idempotency, consent/interest deletion, social search, and 3-per-day ad cap.');
