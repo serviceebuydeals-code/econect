@@ -82,4 +82,15 @@ assert.equal((await request('profile',{avatar:'',bio:'',name:'Bob',surname:'Test
 sqlite.prepare("UPDATE profiles SET identity_changed_at=datetime('now','-31 days') WHERE id='alice'").run();
 assert.equal((await request('profile',{avatar:'',bio:'',name:'Alice Again',surname:'Smith',username:'aliceshop'},'alice')).status,200);
 console.log('PASS: profile identity cooldown, case-insensitive username uniqueness, and unrestricted bio changes.');
+// Voice notes charge one point and credit the conversation recipient.
+for(const u of ['voicepayer','voicereceiver'])assert.equal((await request('signup',{...form,name:u,username:u},u)).status,200);
+const voiceChat=(await request('chat',{recipient:'voicereceiver'},'voicepayer')).data.id;
+const voiceBody={conversation:voiceChat,kind:'voice',body:'/api/media?key=private%2Fvoice',duration:60};
+assert.equal((await request('message',voiceBody,'voicepayer')).status,200);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicepayer'").get().bonus,199);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,201);
+assert.equal((await request('message',{...voiceBody,duration:61},'voicepayer')).status,400);
+assert.equal((await request('message',{...voiceBody,duration:0},'voicepayer')).status,400);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,201);
+console.log('PASS: one-point voice note transfers and duration validation.');
 sqlite.close();delete globalThis.__econectTest;
