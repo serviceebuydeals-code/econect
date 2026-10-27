@@ -89,8 +89,12 @@ const voiceBody={conversation:voiceChat,kind:'voice',body:'/api/media?key=privat
 assert.equal((await request('message',voiceBody,'voicepayer')).status,200);
 assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicepayer'").get().bonus,199);
 assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,201);
-assert.equal((await request('message',{...voiceBody,duration:61},'voicepayer')).status,400);
+assert.equal((await request('message',{...voiceBody,duration:61},'voicepayer')).status,200);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,203);
+assert.equal((await request('message',{...voiceBody,duration:1800},'voicepayer')).status,200);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,233);
+assert.equal((await request('message',{...voiceBody,duration:1801},'voicepayer')).status,400);
 assert.equal((await request('message',{...voiceBody,duration:0},'voicepayer')).status,400);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,201);
-console.log('PASS: one-point voice note transfers and duration validation.');
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,233);
+console.log('PASS: voice note minute rounding, transfers and 30-minute limit.');
 sqlite.close();delete globalThis.__econectTest;
