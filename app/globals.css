@@ -16,3 +16,7 @@
 .sidebar::-webkit-scrollbar-track{background:#edf3ee}
 .sidebar::-webkit-scrollbar-thumb{background:#83a99a;border-radius:8px}
 @media(max-width:560px){.sidebar.open{height:auto;max-height:calc(100dvh - 65px);padding-bottom:max(25px,env(safe-area-inset-bottom))}}
+
+.password-field{position:relative;display:block;width:100%}.password-field input{width:100%;padding-right:48px!important}.password-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:#647771;border-radius:6px}.password-toggle:hover{background:#eef4ef}
+
+.profile-page{margin-top:24px;padding:24px;overflow:hidden}.profile-page .profile-cover{margin:-24px -24px -42px}

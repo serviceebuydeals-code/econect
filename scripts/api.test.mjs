@@ -54,4 +54,17 @@ const welcomeCount=sqlite.prepare("SELECT count(*) n FROM ledger WHERE id='dave-
 await request('signup',{...form,name:'Dave',username:'dave'},'dave');
 assert.equal(sqlite.prepare("SELECT count(*) n FROM ledger WHERE id='dave-welcome'").get().n,welcomeCount);
 console.log('PASS: exactly-once 2 eCoin signup bonus, separate balances, bonus-first spending, preserved bonus restriction, mixed transfer, insufficient-funds protection.');
+// Only the author can delete a post and its associated interaction records.
+assert.equal((await request('post',{body:'Delete test',media:[]},'alice')).status,200);
+const removable=sqlite.prepare("SELECT id FROM posts WHERE user='alice' AND body='Delete test'").get().id;
+assert.equal((await request('like',{post:removable},'bob')).status,200);
+assert.equal((await request('comment',{post:removable,body:'A comment'},'bob')).status,200);
+assert.equal((await request('delete-post',{id:removable},'bob')).status,404);
+assert.ok(sqlite.prepare('SELECT id FROM posts WHERE id=?').get(removable));
+assert.equal((await request('delete-post',{id:removable},'alice')).status,200);
+assert.equal(sqlite.prepare('SELECT id FROM posts WHERE id=?').get(removable),undefined);
+assert.equal(sqlite.prepare('SELECT count(*) n FROM likes WHERE post=?').get(removable).n,0);
+assert.equal(sqlite.prepare('SELECT count(*) n FROM comments WHERE post=?').get(removable).n,0);
+console.log('PASS: post deletion requires ownership and removes interactions.');
+
 sqlite.close();delete globalThis.__econectTest;
