@@ -67,4 +67,11 @@ assert.equal(sqlite.prepare('SELECT count(*) n FROM likes WHERE post=?').get(rem
 assert.equal(sqlite.prepare('SELECT count(*) n FROM comments WHERE post=?').get(removable).n,0);
 console.log('PASS: post deletion requires ownership and removes interactions.');
 
+// Profile photos upload to storage and persist on the account.
+const objects=new Map();globalThis.__econectTest.env.BUCKET={async put(key,value,options){assert.ok(value instanceof ArrayBuffer);objects.set(key,{value,type:options.httpMetadata.contentType})}};
+identity={userId:'alice',isAdmin:false,email:'alice@test.invalid'};
+const photo=new FormData();photo.append('file',new File([new Uint8Array([255,216,255,217])],'profile.jpg',{type:'image/jpeg'}));photo.append('kind','avatar');
+const uploaded=await route.POST(new Request('https://econect.test/api/upload',{method:'POST',headers:{Origin:'https://econect.test'},body:photo}));assert.equal(uploaded.status,200);const photoResult=await uploaded.json();assert.ok(objects.has(new URL('https://econect.test'+photoResult.url).searchParams.get('key')));
+assert.equal((await request('profile',{avatar:photoResult.url,bio:'Hello'},'alice')).status,200);assert.equal(sqlite.prepare("SELECT avatar FROM profiles WHERE id='alice'").get().avatar,photoResult.url);
+console.log('PASS: profile photo upload and saved avatar.');
 sqlite.close();delete globalThis.__econectTest;
