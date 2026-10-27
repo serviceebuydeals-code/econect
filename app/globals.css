@@ -22,3 +22,16 @@
 .profile-page{margin-top:24px;padding:24px;overflow:hidden}.profile-page .profile-cover{margin:-24px -24px -42px}
 
 .startup-screen{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}.startup-screen strong{font-size:22px}.startup-screen p{color:#647771}
+
+/* Fit phone screens while keeping pinch-to-zoom available. */
+@media (max-width: 760px) {
+  html, body, #root { width: 100%; min-width: 0; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea { font-size: 16px !important; max-width: 100%; }
+  .app-layout, .main-content, .card, .modal, .profile-page, .chat-window { min-width: 0; max-width: 100%; }
+  .post-body, .profile-comment p, .chat-messages, .transaction, .profile-summary, .market, .wealth { overflow-wrap: anywhere; }
+  .topbar { min-width: 0; }
+  .header-actions { gap: 6px; min-width: 0; }
+  .account-chip strong { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .form-grid { grid-template-columns: 1fr; }
+  .modal { max-height: min(90vh, 90dvh); }
+}
