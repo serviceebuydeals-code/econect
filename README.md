@@ -174,3 +174,18 @@ Conversation participants can attach one photo or video per message. The sender 
 Attachments are stored as private R2 objects and served only to participants after a matching message is sent. Upload records bind each file to its uploader, conversation and media type. Product snapshots use the existing public product images. This is not end-to-end encryption.
 
 Validation: TypeScript, production build, the existing social/auth/marketplace/investment/withdrawal/referral tests, dedicated shop/chat accounting/privacy tests, and Wrangler dry-run. Tests cover phone editing, free zero-balance inquiries, either participant starting, active-conversation reuse, attachment authorization, exact point transfers, bonus preservation, idempotency and accrued-charge protection. Live Cloudflare and two-device browser testing remain necessary.
+
+
+## Paystack primary checkout
+
+Migration `0011_paystack.sql` is applied by the existing `npm run deploy` Worker Builds command. Add the account's live Paystack secret key as a Cloudflare Worker Secret named `PAYSTACK_SECRET_KEY`; never commit or share the key. With a valid live key configured, Paystack is the first and default direct-payment choice for eCoin top-ups, gifts, votes, direct investment purchases, and promotions. Existing wallet payment choices remain available. Without a live key, the existing manually confirmed bank-transfer flow remains available.
+
+Configure the account's live Paystack webhook URL to `https://YOUR-ECONECT-DOMAIN/api/paystack/webhook` before enabling live checkout. If another app already uses the same Paystack webhook, do not replace it without arranging delivery to both apps. The callback URL is set per transaction from APP_ORIGIN when configured, otherwise from the site origin.
+
+Checkout is initialized server-side using the authenticated account email, a unique reference and a server-calculated price in NGN kobo. Customers are redirected to Paystack's hosted checkout; card details and the secret key do not enter the browser application. A signed HMAC-SHA512 webhook or the authenticated callback triggers a server-to-server Paystack verification. The reference, NGN currency, amount and live domain must match the locally recorded transaction. Repeated events and concurrent callback/webhook processing cannot deliver value twice.
+
+Verified purchases credit wallets or vote recipients, trigger eligible referral rewards, start the 180-day investment countdown, or activate promotions. Paystack-linked transactions cannot be manually confirmed or rejected through the old bank-transfer admin controls. Existing manual bank-transfer transactions remain separately manageable. A pending transaction can be rechecked in wallet activity, investment tracking or promotion history.
+
+Only live keys are enabled on this production ledger. Test-mode keys are deliberately rejected so fake payments cannot credit live wallets. Automated tests simulate Paystack rather than charging a real account; live provider checkout and webhook delivery have not been verified. Paystack bank withdrawals are not implemented; the existing manual admin withdrawal workflow remains. Refunds and chargebacks do not automatically reverse delivered eCoin and require manual reconciliation. Marketplace Buy now remains a product inquiry, not a Paystack product checkout.
+
+Validation: TypeScript, Vite build, all existing feature tests, Paystack mock integration tests and Wrangler deployment dry-run. Tests cover secret/mode restrictions, initialization and price validation, webhook signature verification, server-side verification, pending/mismatched payments, idempotency, wallet/gift/vote/referral credit, investment start, promotion activation and manual-confirmation exclusion.

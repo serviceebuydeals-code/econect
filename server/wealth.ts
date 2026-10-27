@@ -11,8 +11,8 @@ export async function wealthRoute(r:Request):Promise<Response>{try{
  if(r.method==='GET'){
   if(path==='config')return Response.json({coinPrice:await getCoinPrice(db),packs,termDays:180,interestPercent:25,cashoutFeePercent:5,earlyCashout:true});
   await guard();
-  if(path==='investments')return Response.json({now:Date.now(),investments:await all('SELECT * FROM investments WHERE user=? ORDER BY created DESC,rowid DESC',uid)});
-  if(path==='admin'){if(!auth?.isAdmin)fail('Admin only.',403);return Response.json({now:Date.now(),investments:await all('SELECT i.*,p.username,p.name FROM investments i JOIN profiles p ON p.id=i.user ORDER BY i.created DESC,i.rowid DESC LIMIT 500')})}
+  if(path==='investments')return Response.json({now:Date.now(),investments:await all('SELECT i.*,(SELECT reference FROM paystack_transactions x WHERE x.kind=\'investment\' AND x.object_id=i.id) paystack_reference FROM investments i WHERE i.user=? ORDER BY i.created DESC,i.rowid DESC',uid)});
+  if(path==='admin'){if(!auth?.isAdmin)fail('Admin only.',403);return Response.json({now:Date.now(),investments:await all('SELECT i.*,p.username,p.name,(SELECT reference FROM paystack_transactions x WHERE x.kind=\'investment\' AND x.object_id=i.id) paystack_reference FROM investments i JOIN profiles p ON p.id=i.user ORDER BY i.created DESC,i.rowid DESC LIMIT 500')})}
   fail('Not found',404);
  }
  if(r.method!=='POST')fail('Method not allowed',405);await guard();if(r.headers.get('origin')&&r.headers.get('origin')!==url.origin)fail('Invalid origin',403);const b:any=await r.json();
@@ -34,7 +34,7 @@ export async function wealthRoute(r:Request):Promise<Response>{try{
   await q("UPDATE investments SET reference=? WHERE id=? AND user=? AND status='pending' AND source='bank'",reference,text(b.id,80),uid).run();return Response.json({ok:true});
  }
  if(path==='admin-confirm'){
-  if(!auth?.isAdmin)fail('Admin only.',403);if(!['confirm','reject'].includes(b.action))fail('Choose confirm or reject.');
+  if(!auth?.isAdmin)fail('Admin only.',403);if(await one("SELECT reference FROM paystack_transactions WHERE kind='investment' AND object_id=?",b.id))fail('Paystack payments are confirmed automatically.');if(!['confirm','reject'].includes(b.action))fail('Choose confirm or reject.');
   await q("UPDATE investments SET status=?,starts=CASE WHEN ?='confirm' THEN CURRENT_TIMESTAMP ELSE NULL END,matures=CASE WHEN ?='confirm' THEN datetime('now','+180 days') ELSE NULL END WHERE id=? AND status='pending'",b.action==='confirm'?'confirmed':'rejected',b.action,b.action,text(b.id,80)).run();return Response.json({ok:true});
  }
  if(path==='quote'){
