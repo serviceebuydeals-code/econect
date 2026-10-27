@@ -135,3 +135,16 @@ Validation: TypeScript, Vite production build, social/auth/marketplace tests, ne
 ## Current investment rate: 15% for new investments
 
 Migration 0006 preserves existing investment records and their agreed 10% interest, while enabling the new 15% plan. New investments now store 15 interest points per invested eCoin. The 180-day term and 5% cashout fee remain unchanged. Early cashout pays principal less 5%, without interest. At maturity, 1 eCoin pays 115 − 5.75 = 109.25 points (1.0925 eCoin) after the fee. Investment history, payout calculations and ledger labels use each record's stored rate. Tests cover both new 15% and migrated 10% investments.
+
+
+## Current investment rate and bank withdrawals
+
+Migrations `0007_twentyfive_percent_interest.sql` and `0008_bank_withdrawals.sql` are applied by the existing `npm run deploy` command. The current offer for new investments is 25% interest after 180 days, with a 5% investment-to-wallet cashout fee on principal plus earned interest. Early investment cashout returns principal less 5%, with no interest. Existing 10% and 15% investments retain their stored rates and their balances, status, maturity dates and histories survive migration.
+
+Users can request a bank withdrawal from the withdrawable wallet balance. Bonus eCoin remains non-withdrawable. The user reviews a 10% admin fee and the net bank amount before submitting. The bank value uses the eCoin price at request time; later price changes do not change pending requests. Amounts are rounded to the nearest kobo and the fee is retained from the bank transfer amount. The full requested eCoin principal is reserved once, and a rejected request returns it exactly once.
+
+Admin studio → Withdrawals shows private bank details, pending/processing/paid/rejected requests and total fees for paid withdrawals. One administrator must claim a request before transferring funds; only that administrator can record it paid, release it or reject it while processing. Marking paid requires the external bank transfer reference. An administrator should release or reject only when no payment was sent.
+
+Bank transfers are manual; this feature does not integrate a payout provider or send money automatically. The operator retains the fee in the funds held for paying bank withdrawals; the fee is not credited to a separate admin eCoin wallet. Account details are visible only to the owner and authorized admins.
+
+Validation: TypeScript, production build, all social/auth/market/investment tests, dedicated withdrawal tests and Wrangler dry-run. Tests cover migration of legacy rates, 25% maturity math, bonus exclusion, exact 10% fee and kobo rounding, reserve/refund idempotency, price locking, private access, competing admin claims, and transfer-reference requirements. Live migration and bank transfers require verification after deployment.
