@@ -148,3 +148,16 @@ Admin studio → Withdrawals shows private bank details, pending/processing/paid
 Bank transfers are manual; this feature does not integrate a payout provider or send money automatically. The operator retains the fee in the funds held for paying bank withdrawals; the fee is not credited to a separate admin eCoin wallet. Account details are visible only to the owner and authorized admins.
 
 Validation: TypeScript, production build, all social/auth/market/investment tests, dedicated withdrawal tests and Wrangler dry-run. Tests cover migration of legacy rates, 25% maturity math, bonus exclusion, exact 10% fee and kobo rounding, reserve/refund idempotency, price locking, private access, competing admin claims, and transfer-reference requirements. Live migration and bank transfers require verification after deployment.
+
+
+## Username referrals
+
+Migration `0009_referrals.sql` is applied through the existing `npm run deploy` Workers Builds command. It adds case-insensitive username uniqueness, referral eligibility, registration attribution and reward accounting. Existing usernames were lowercased at signup; the uniqueness migration will fail rather than merge accounts if the database already contains case-only duplicates.
+
+Admin studio → Referrals enables a registered username as its referral code and sets a start date and expiry date. Dates are inclusive and use Lagos time. An expired or disabled code cannot be used for new registrations or earn new rewards. Admin can edit its dates and re-enable it. Existing referral relationships remain attached to the member after a code expires and can earn rewards on new qualifying payments once it is active again; expired-period payments are not rewarded retroactively.
+
+Create Account has an optional referral code. New usernames and codes are checked before creating the login, and revalidated when the profile is created. Username uniqueness is enforced by the database irrespective of letter case. The referrer sees their code, eligibility status and recent rewards in their own profile.
+
+Whenever a referred user's direct eCoin purchase is confirmed during an active eligibility period, the referrer receives 5% of purchased eCoin as withdrawable points. The buyer or gift/vote recipient still receives the full purchased amount. Eligible direct purchases include top-ups, gifts, votes and direct-bank investment purchases. Investing or spending existing wallet funds, bank promotion service payments, pending/rejected payments and purchases confirmed while the code is inactive do not earn referral rewards. Rewards are recorded once per confirmed transaction, atomically with confirmation and with a wallet ledger entry.
+
+Validation: TypeScript, Vite production build, social/auth/marketplace/investment/withdrawal/referral tests and Wrangler dry-run. Tests cover case-insensitive names, optional active-code signup, admin authorization/date windows, exact 5% independent of buyer balance, duplicate confirmations, expiry/reactivation and wallet-spending exclusion. Live Cloudflare migration and end-to-end checks are still required.
