@@ -3,7 +3,7 @@ import {readFileSync,readdirSync} from 'node:fs';
 import ts from 'typescript';
 import assert from 'node:assert/strict';
 const sqlite=new DatabaseSync(':memory:');for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));
-const db={prepare(sql){let vals=[];return{bind(...v){vals=v;return this},async first(){return sqlite.prepare(sql).get(...vals)||null},async all(){return{results:sqlite.prepare(sql).all(...vals)}},async run(){sqlite.prepare(sql).run(...vals);return{success:true}}}},async batch(statements){sqlite.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());sqlite.exec('COMMIT');return out}catch(e){sqlite.exec('ROLLBACK');throw e}}};
+const db={prepare(sql){let vals=[];return{bind(...v){vals=v;return this},async first(){return sqlite.prepare(sql).get(...vals)||null},async all(){return{results:sqlite.prepare(sql).all(...vals)}},async run(){const result=sqlite.prepare(sql).run(...vals);return{success:true,meta:{changes:Number(result.changes)}}}}},async batch(statements){sqlite.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());sqlite.exec('COMMIT');return out}catch(e){sqlite.exec('ROLLBACK');throw e}}};
 let identity=null;globalThis.__econectTest={env:{DB:db},getAuth:async()=>identity};
 let code=readFileSync('server/api.ts','utf8').replace("import{env}from'cloudflare:workers';import{getUser}from'./auth';","const env=globalThis.__econectTest.env;const getUser=globalThis.__econectTest.getAuth;");
 code=code.replace("import{getCoinPrice,coinAmount}from'./pricing';",readFileSync('server/pricing.ts','utf8').replace(/export /g,''));
@@ -74,4 +74,12 @@ const photo=new FormData();photo.append('file',new File([new Uint8Array([255,216
 const uploaded=await route.POST(new Request('https://econect.test/api/upload',{method:'POST',headers:{Origin:'https://econect.test'},body:photo}));assert.equal(uploaded.status,200);const photoResult=await uploaded.json();assert.ok(objects.has(new URL('https://econect.test'+photoResult.url).searchParams.get('key')));
 assert.equal((await request('profile',{avatar:photoResult.url,bio:'Hello'},'alice')).status,200);assert.equal(sqlite.prepare("SELECT avatar FROM profiles WHERE id='alice'").get().avatar,photoResult.url);
 console.log('PASS: profile photo upload and saved avatar.');
+// Identity changes are unique and limited atomically to once every 30 days.
+assert.equal((await request('profile',{avatar:'',bio:'',name:'Alice New',surname:'Smith',username:'aliceshop'},'alice')).status,200);
+assert.equal((await request('profile',{avatar:'',bio:'updated',name:'Alice New',surname:'Smith',username:'aliceshop'},'alice')).status,200);
+assert.equal((await request('profile',{avatar:'',bio:'',name:'Alice Again',surname:'Smith',username:'aliceshop'},'alice')).status,429);
+assert.equal((await request('profile',{avatar:'',bio:'',name:'Bob',surname:'Test',username:'ALICESHOP'},'bob')).status,400);
+sqlite.prepare("UPDATE profiles SET identity_changed_at=datetime('now','-31 days') WHERE id='alice'").run();
+assert.equal((await request('profile',{avatar:'',bio:'',name:'Alice Again',surname:'Smith',username:'aliceshop'},'alice')).status,200);
+console.log('PASS: profile identity cooldown, case-insensitive username uniqueness, and unrestricted bio changes.');
 sqlite.close();delete globalThis.__econectTest;
