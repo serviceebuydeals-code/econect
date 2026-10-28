@@ -9,7 +9,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "npm run build && wrangler dev",
-    "deploy": "npm run build && npm run db:remote && wrangler deploy",
+    "deploy": "npm run build && npm run db:remote && wrangler deploy --triggers \"* * * * *\"",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
     "test": "node scripts/api.test.mjs && node scripts/auth.test.mjs && node scripts/market.test.mjs && node scripts/wealth.test.mjs && node scripts/withdrawal.test.mjs && node scripts/referral.test.mjs && node scripts/shop-chat.test.mjs && node scripts/paystack.test.mjs",

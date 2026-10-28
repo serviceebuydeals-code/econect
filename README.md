@@ -189,3 +189,15 @@ Verified purchases credit wallets or vote recipients, trigger eligible referral 
 Only live keys are enabled on this production ledger. Test-mode keys are deliberately rejected so fake payments cannot credit live wallets. Automated tests simulate Paystack rather than charging a real account; live provider checkout and webhook delivery have not been verified. Paystack bank withdrawals are not implemented; the existing manual admin withdrawal workflow remains. Refunds and chargebacks do not automatically reverse delivered eCoin and require manual reconciliation. Marketplace Buy now remains a product inquiry, not a Paystack product checkout.
 
 Validation: TypeScript, Vite build, all existing feature tests, Paystack mock integration tests and Wrangler deployment dry-run. Tests cover secret/mode restrictions, initialization and price validation, webhook signature verification, server-side verification, pending/mismatched payments, idempotency, wallet/gift/vote/referral credit, investment start, promotion activation and manual-confirmation exclusion.
+
+## Come Live
+
+Migration `0014_come_live.sql` adds live slots and gift events and preserves existing Paystack payment rows while extending the payment types. The configured deploy command applies it automatically.
+
+Enable Cloudflare Stream on the Cloudflare account, then configure runtime variable `STREAM_ACCOUNT_ID` and secret `STREAM_API_TOKEN` (restricted to Stream Write on that account). Never commit either API token or stream publishing URL. Live bookings and direct live checkout remain disabled when the Stream connection is absent. Stream delivery usage is billed separately by Cloudflare. Validate a real broadcast and payment before inviting customers to book.
+
+Creators book in their device timezone at 1 eCoin per scheduled hour, choosing 1, 2, 4, 8, 15, 30, 50, or 100 hours. At the scheduled time the creator must open Come Live and explicitly start camera/microphone access. Paid slots use wall-clock scheduled start/end, not a stopwatch of broadcasting time. Wallet booking fees use bonus first; gifts preserve bonus/withdrawable classification.
+
+Broadcast uses a server-proxied WHIP exchange; public viewing uses WHEP. Publishing URLs stay server-side. A one-minute Worker cron deletes expired live inputs, including retry after temporary provider errors. UI/authorization enforce the paid window, but provider teardown may lag until the cron succeeds. Provider errors and account billing require operational monitoring.
+
+Tests simulate Stream API responses and cover schedule permissions, no charges before setup, wallet/direct booking confirmation, exactly-once gifting, expiry cleanup, and historical payment migration. Actual mobile camera streaming and Cloudflare Stream connectivity remain an external verification step.
