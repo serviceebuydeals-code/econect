@@ -54,6 +54,38 @@ const directId=crypto.randomUUID();t=await req('paystack/initialize',{id:directI
 const nowLive=Date.now();sqlite.prepare("UPDATE live_bookings SET scheduled=?,ends=?,heartbeat=? WHERE id=?").run(nowLive-1000,nowLive+3600000,nowLive,bookingId);
 const giftBefore=balance('bob'),giverBefore=balance('carol'),giftId=crypto.randomUUID();assert.equal((await liveReq('gift',{id:giftId,booking:bookingId,coins:1},'carol')).status,200);assert.equal(balance('bob').balance+balance('bob').bonus,giftBefore.balance+giftBefore.bonus+100);assert.equal(balance('carol').balance+balance('carol').bonus,giverBefore.balance+giverBefore.bonus-100);assert.equal((await liveReq('gift',{id:giftId,booking:bookingId,coins:1},'carol')).status,200);assert.equal((await liveReq('gifts?id='+bookingId)).data.length,1);
 t=await req('paystack/initialize',{id:crypto.randomUUID(),kind:'payment',action:'gift',recipient:'bob',coins:1,coinPrice:1500,liveSession:bookingId},'carol');assert.equal(t.status,200);ref=t.data.reference;transactions.get(ref).status='success';await event(ref);await event(ref);assert.equal((await liveReq('gifts?id='+bookingId)).data.length,2);
+// Paid live engagement conserves points, preserves buckets and never charges retries.
+const total=u=>balance(u).balance+balance(u).bonus;
+const socialBefore={sender:total('carol'),recipient:total('bob')};
+const likeAction={id:crypto.randomUUID(),booking:bookingId,kind:'like'};
+assert.equal((await liveReq('engage',likeAction,'carol')).status,200);
+assert.equal(total('carol'),socialBefore.sender-20);assert.equal(total('bob'),socialBefore.recipient+20);
+assert.equal((await liveReq('engage',likeAction,'carol')).status,200);
+assert.equal((await liveReq('engage',{...likeAction,id:crypto.randomUUID()},'carol')).status,200);
+assert.equal(total('carol'),socialBefore.sender-20);
+const commentAction={id:crypto.randomUUID(),booking:bookingId,kind:'comment',text:'Hello live!'};
+assert.equal((await liveReq('engage',commentAction,'carol')).status,200);
+assert.equal((await liveReq('engage',commentAction,'carol')).status,200);
+assert.equal(total('carol'),socialBefore.sender-40);assert.equal(total('bob'),socialBefore.recipient+40);
+assert.equal((await liveReq('engage',{...commentAction,text:'Changed'},'carol')).status,409);
+assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID(),text:' '},'carol')).status,400);
+assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID(),text:'x'.repeat(501)},'carol')).status,400);
+assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},null)).status,401);
+assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},'bob')).status,400);
+const engagement=(await liveReq('engagements?id='+bookingId,undefined,'carol')).data;
+assert.equal(engagement.likes,1);assert.equal(engagement.comments,1);assert.equal(engagement.liked,true);assert.equal(engagement.rows[0].text,'Hello live!');
+// Insufficient funds rolls back the comment and all ledger changes.
+const savedCarol=balance('carol');sqlite.prepare("UPDATE profiles SET balance=0,bonus=19 WHERE id='carol'").run();
+const poorAction={...commentAction,id:crypto.randomUUID()},beforePoor=total('bob');
+assert.equal((await liveReq('engage',poorAction,'carol')).status,400);assert.equal(total('carol'),19);assert.equal(total('bob'),beforePoor);assert.equal(sqlite.prepare('SELECT count(*) n FROM live_engagements WHERE id=?').get(poorAction.id).n,0);
+sqlite.prepare("UPDATE profiles SET balance=15,bonus=10 WHERE id='carol'").run();
+const mixedBefore=balance('bob');assert.equal((await liveReq('engage',poorAction,'carol')).status,200);
+assert.equal(balance('carol').balance,5);assert.equal(balance('carol').bonus,0);assert.equal(balance('bob').bonus,mixedBefore.bonus+10);assert.equal(balance('bob').balance,mixedBefore.balance+10);
+sqlite.prepare("UPDATE profiles SET balance=?,bonus=? WHERE id='carol'").run(savedCarol.balance,savedCarol.bonus);
+// Ended broadcasts cannot accept paid engagement.
+sqlite.prepare('UPDATE live_bookings SET heartbeat=0 WHERE id=?').run(bookingId);
+assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},'carol')).status,400);
+sqlite.prepare('UPDATE live_bookings SET heartbeat=? WHERE id=?').run(Date.now(),bookingId);
 // Provider API integration is simulated; permanent publishing keys must not be returned to clients.
 const paystackMock=globalThis.fetch;let deleted=0;globalThis.fetch=async(url,opts={})=>{const u=new URL(url);if(u.hostname==='api.cloudflare.com'){if(opts.method==='DELETE'){deleted++;return Response.json({success:true})}return Response.json({success:true,result:{uid:'live-input',webRTC:{url:'https://customer-test.cloudflarestream.com/secret/webRTC/publish'},webRTCPlayback:{url:'https://customer-test.cloudflarestream.com/live-input/webRTC/play'}}})}if(u.hostname.endsWith('.cloudflarestream.com'))return new Response('v=0\r\nanswer');return paystackMock(url,opts)};
 const started=await liveReq('broadcast',{id:bookingId,sdp:'v=0\r\noffer'});assert.equal(started.status,200);assert.equal(started.data.sdp,'v=0\r\nanswer');assert.ok(!JSON.stringify(started.data).includes('secret'));assert.equal((await liveReq('heartbeat',{id:bookingId})).status,200);assert.ok((await liveReq('play?id='+bookingId,undefined,null)).data.url.includes('/webRTC/play'));
