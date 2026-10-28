@@ -22,7 +22,6 @@ if(path==='engage'){
  const id=String(b.id||''),booking=String(b.booking||''),kind=String(b.kind||''),text=kind==='comment'?String(b.text||'').trim():'';
  if(!/^[a-f0-9-]{36}$/i.test(id)||!['like','comment'].includes(kind)||(kind==='comment'&&(!text||text.length>500)))fail('Enter a comment of 1–500 characters.');
  const old=await one('SELECT * FROM live_engagements WHERE id=?',id);if(old){if(old.sender!==uid||old.booking!==booking||old.kind!==kind||old.text!==text)fail('This action ID is already in use.',409);return Response.json({ok:true})}
- if(kind==='like'&&await one("SELECT id FROM live_engagements WHERE booking=? AND sender=? AND kind='like'",booking,uid))return Response.json({ok:true});
  await q('INSERT OR IGNORE INTO live_engagements(id,booking,sender,kind,text) VALUES(?,?,?,?,?)',id,booking,uid,kind,text).run();return Response.json({ok:true});
 }
 if(path==='gift'){

@@ -16,7 +16,7 @@ for(const user of ['alice','bob','carol','admin'])assert.equal((await request('s
 assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='alice'").get().bonus,200);assert.equal(sqlite.prepare("SELECT count(*) n FROM ledger WHERE id='alice-welcome'").get().n,1);sqlite.prepare('UPDATE profiles SET bonus=0').run();sqlite.prepare("UPDATE profiles SET balance=CASE id WHEN 'bob' THEN 8 WHEN 'carol' THEN 4 ELSE 0 END").run();
 assert.equal((await request('signup',{...form,name:'duplicate',username:'alice'},'duplicate')).status,400);
 await request('post',{body:'A real community post',media:[]},'alice');let post=sqlite.prepare('SELECT * FROM posts').get();
-await request('like',{post:post.id},'bob');await request('like',{post:post.id},'bob');assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,4);
+const firstLike={post:post.id,id:crypto.randomUUID()};await request('like',firstLike,'bob');await request('like',firstLike,'bob');assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,4);
 await request('comment',{post:post.id,body:'Hello'},'bob');let comment=sqlite.prepare('SELECT * FROM comments').get();
 await request('comment',{post:post.id,body:'A thoughtful reply',parent:comment.id},'carol');assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,10);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='bob'").get().balance,2);
 assert.equal((await request('admin/bank',{bank:'Test Bank',name:'eConect Test',number:'0000000000'},'alice')).status,403);
@@ -103,16 +103,16 @@ sqlite.prepare("UPDATE profiles SET balance=100,bonus=0 WHERE id IN('actorone','
 const combined=()=>sqlite.prepare("SELECT sum(balance+bonus) n FROM profiles WHERE id IN('actorone','actortwo','actorpoor')").get().n;
 await request('post',{body:'Funded post',media:[]},'actorone');const fundedPost=sqlite.prepare("SELECT id FROM posts WHERE body='Funded post'").get().id;
 assert.equal((await request('like',{post:fundedPost},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,96);
-assert.equal((await request('like',{post:fundedPost},'actortwo')).data.already,true);assert.equal(combined(),200);
+const repeatLike={post:fundedPost,id:crypto.randomUUID()};assert.equal((await request('like',repeatLike,'actortwo')).status,200);assert.equal((await request('like',repeatLike,'actortwo')).data.already,true);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,92);assert.equal(sqlite.prepare('SELECT count(*) n FROM likes WHERE post=?').get(fundedPost).n,2);
 assert.equal((await request('like',{post:fundedPost},'actorpoor')).status,400);assert.equal(sqlite.prepare("SELECT count(*) n FROM likes WHERE user='actorpoor'").get().n,0);
-assert.equal((await request('comment',{post:fundedPost,body:'Paid comment'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,92);
+assert.equal((await request('comment',{post:fundedPost,body:'Paid comment'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 assert.equal((await request('comment',{post:fundedPost,body:'No funds'},'actorpoor')).status,400);assert.equal(sqlite.prepare("SELECT count(*) n FROM comments WHERE user='actorpoor'").get().n,0);
 const actorChat=(await request('chat',{recipient:'actortwo'},'actorone')).data.id;
-assert.equal((await request('message',{conversation:actorChat,kind:'voice',body:'/api/media?key=private%2Fv',duration:61},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,90);
+assert.equal((await request('message',{conversation:actorChat,kind:'voice',body:'/api/media?key=private%2Fv',duration:61},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,86);
 sqlite.prepare('INSERT INTO conversation_usage(conversation,user,texts) VALUES(?,?,999)').run(actorChat,'actortwo');
-assert.equal((await request('message',{conversation:actorChat,kind:'text',body:'Paid text'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,86);
-assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,200);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,82);
-assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,82);
+assert.equal((await request('message',{conversation:actorChat,kind:'text',body:'Paid text'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,82);
+assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,200);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,78);
+assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,78);
 assert.equal((await request('chats',undefined,'actorone')).status,200);assert.equal((await request('unread',undefined,'actorone')).data.messages,2);
 const snapshot=(await request('messages?id='+actorChat,undefined,'actorone')).data;
 assert.equal((await request('unread',undefined,'actorone')).data.messages,2); // fetching alone does not clear unread
