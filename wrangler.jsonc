@@ -30,5 +30,8 @@
       "bucket_name": "econect-media"
     }
   ],
-  "keep_vars": true
+  "keep_vars": true,
+  "vars": {
+    "STREAM_ACCOUNT_ID": "143eedba9d8f1ec442c0ec8d3191330f"
+  }
 }
