@@ -12,7 +12,7 @@
     "deploy": "npm run build && npm run db:remote && wrangler deploy --triggers \"* * * * *\"",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
-    "test": "node scripts/navigation.test.mjs && node scripts/api.test.mjs && node scripts/auth.test.mjs && node scripts/market.test.mjs && node scripts/wealth.test.mjs && node scripts/withdrawal.test.mjs && node scripts/referral.test.mjs && node scripts/shop-chat.test.mjs && node scripts/paystack.test.mjs",
+    "test": "node scripts/video.test.mjs && node scripts/navigation.test.mjs && node scripts/api.test.mjs && node scripts/auth.test.mjs && node scripts/market.test.mjs && node scripts/wealth.test.mjs && node scripts/withdrawal.test.mjs && node scripts/referral.test.mjs && node scripts/shop-chat.test.mjs && node scripts/paystack.test.mjs",
     "check": "tsc --noEmit"
   },
   "dependencies": {

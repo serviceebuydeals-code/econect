@@ -128,4 +128,27 @@ identity={userId:'actorone',isAdmin:false};const videoForm=new FormData();videoF
 assert.equal((await route.POST(new Request('https://econect.test/api/upload',{method:'POST',headers:{Origin:'https://econect.test'},body:videoForm}))).status,200);
 console.log('PASS: actor-funded interactions conserve points, unread watermarks persist, and video upload uses a known-size body.');
 
+
+
+// Original feed videos above the old 5 MB cutoff upload directly; chat keeps its smaller limit.
+const larger=new File([new Uint8Array(6000000)],'original.mp4',{type:'video/mp4'});let putCount=0;
+globalThis.__econectTest.env.BUCKET={async put(key,value){assert.ok(value instanceof File);assert.equal(value.size,6000000);putCount++}};
+identity={userId:'actorone',isAdmin:false};const originalForm=new FormData();originalForm.append('file',larger);originalForm.append('kind','post');assert.equal((await route.POST(new Request('https://econect.test/api/upload',{method:'POST',headers:{Origin:'https://econect.test'},body:originalForm}))).status,200);assert.equal(putCount,1);
+const chatForm=new FormData();chatForm.append('file',larger);chatForm.append('kind','chat');assert.equal((await route.POST(new Request('https://econect.test/api/upload',{method:'POST',headers:{Origin:'https://econect.test'},body:chatForm}))).status,400);assert.equal(putCount,1);
+assert.equal((await request('post',{body:'Video with bad cover',media:[{type:'video',url:'/api/media?key=public%2Fclip',poster:'https://outside.test/image'}]},'actorone')).status,400);
+// Range responses let mobile browsers seek and start uploaded video reliably.
+const bytes=new Uint8Array([10,20,30,40,50,60]);let requestedRange;
+globalThis.__econectTest.env.BUCKET={async head(){return{size:bytes.length,httpEtag:'"video"',writeHttpMetadata(h){h.set('Content-Type','video/mp4')}}},async get(key,options){requestedRange=options?.range;const body=requestedRange?bytes.slice(requestedRange.offset,requestedRange.offset+requestedRange.length):bytes;return{size:bytes.length,httpEtag:'"video"',body,writeHttpMetadata(h){h.set('Content-Type','video/mp4')}}}};
+identity=null;
+async function mediaRange(range,method='GET',key='public/video'){return route.GET(new Request('https://econect.test/api/media?key='+encodeURIComponent(key),{method,headers:range?{Range:range}:{}}))}
+let ranged=await mediaRange('bytes=1-3');assert.equal(ranged.status,206);assert.equal(ranged.headers.get('Content-Range'),'bytes 1-3/6');assert.equal(ranged.headers.get('Content-Length'),'3');assert.deepEqual([...new Uint8Array(await ranged.arrayBuffer())],[20,30,40]);
+ranged=await mediaRange('bytes=-2');assert.equal(ranged.status,206);assert.deepEqual([...new Uint8Array(await ranged.arrayBuffer())],[50,60]);
+ranged=await mediaRange('bytes=4-');assert.equal(ranged.status,206);assert.equal(ranged.headers.get('Content-Range'),'bytes 4-5/6');
+ranged=await mediaRange('bytes=99-');assert.equal(ranged.status,416);assert.equal(ranged.headers.get('Content-Range'),'bytes */6');
+assert.equal((await mediaRange('bytes=0-1,3-4')).status,416);
+ranged=await mediaRange(null,'HEAD');assert.equal(ranged.status,200);assert.equal(ranged.headers.get('Content-Length'),'6');assert.equal(await ranged.text(),'');
+ranged=await mediaRange(null);assert.equal(ranged.status,200);assert.equal(ranged.headers.get('Accept-Ranges'),'bytes');assert.equal((await ranged.arrayBuffer()).byteLength,6);
+assert.equal((await mediaRange('bytes=0-1','GET','private/video')).status,401);
+console.log('PASS: video byte ranges, suffix/open ranges, seek bounds, HEAD, full video length and private media access checks.');
+
 sqlite.close();delete globalThis.__econectTest;

@@ -210,3 +210,10 @@ Admin → Settings → Gift Club schedule controls the event date, time and dura
 The live host can comment free in their own active slot. Other live comments and repeat likes transfer 20 points from viewer to creator. Liker thumbnails repeat from the left and disappear before the middle; live shows usernames while posts show only the thumbnail. Selecting a thumbnail opens the member profile. All API insufficient-funds errors are normalized to `Insufficient eCoin` and open the existing top-up flow.
 
 Migration `0017_gift_club.sql` is applied by `npm run deploy` before publishing. Validation includes wallet-only bonus exclusion, administrator permissions, schedule locking, verified direct entry, idempotency, confirmed-only announcements, free host comments and the public insufficient-funds response. Real payment and camera checks remain manual.
+
+
+### Feed video editor
+
+Selecting Video opens a local editor immediately. Users can choose a clip up to 60 seconds, capture a thumbnail frame, optionally reduce low-frequency rumble and level loud peaks, add the result to the composer, or post immediately. Original video upload bypasses browser recording when no edits are needed. Feed originals/processed clips may be up to 80 MB; chat remains below 5 MB. Video trim/audio processing uses browser MediaRecorder and canvas support; unsupported browsers can upload a compatible original clip. This is basic audio filtering/leveling, not speech isolation.
+
+Uploads use XMLHttpRequest transfer progress with explicit preparation, video upload, thumbnail upload and publishing phases. Cancel/network/time-out errors retain the local editor for retry. Public/private media now supports byte ranges and HEAD with length and range headers for mobile video playback and seeking. Tests cover transfer progress/failure/cancellation, clip bounds, direct uploads above 5 MB, thumbnail validation, byte-range bounds and private access. Device-specific codecs, trim rendering and audio still require a real-browser/device check.
