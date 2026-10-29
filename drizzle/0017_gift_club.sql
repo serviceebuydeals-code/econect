@@ -22,5 +22,5 @@ END;
 DROP TRIGGER live_engagement_transfer;
 CREATE TRIGGER live_engagement_transfer AFTER INSERT ON live_engagements BEGIN
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM live_bookings WHERE id=NEW.booking AND (user<>NEW.sender OR NEW.kind='comment') AND status='confirmed' AND closed=0 AND scheduled<=unixepoch()*1000 AND ends>unixepoch()*1000 AND (user=NEW.sender OR heartbeat>unixepoch()*1000-45000)) THEN RAISE(ABORT,'Choose another creator who is currently live.') END;
- INSERT INTO point_transfers(id,sender,recipient,points,label) SELECT 'live-engagement-'||NEW.id,NEW.sender,user,20,CASE NEW.kind WHEN 'like' THEN 'Live like' ELSE 'Live comment' END FROM live_bookings WHERE id=NEW.booking AND user<>NEW.sender;
+ INSERT INTO point_transfers(id,sender,recipient,points,label) SELECT 'live-engagement-'||NEW.id,NEW.sender,user,20, CASE NEW.kind WHEN 'like' THEN 'Live like' ELSE 'Live comment' END FROM live_bookings WHERE id=NEW.booking AND user<>NEW.sender;
 END;
