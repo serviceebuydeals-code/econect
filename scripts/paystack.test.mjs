@@ -40,7 +40,7 @@ assert.equal((await req('paystack/verify',{reference:'not-valid'},'bob')).status
 console.log('PASS: Paystack server-side initialization, live-key requirement, authorization, raw HMAC signatures, verified amount/currency/live mode, pending and failed protections, duplicate webhook/callback idempotency, exact wallet/gift/vote credits, referral rewards, investment maturity start, promotion activation, and manual-confirmation blocking.');
 // Live bookings: disabled payments, wallet fees, direct confirmation and gifts.
 const live=await load('server/live.ts');
-async function liveReq(path,body,user='bob'){identity=user?{userId:user,isAdmin:false,email:user+'@test.invalid'}:null;const r=await live.liveRoute(new Request('https://econect.test/api/live/'+path,body?{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://econect.test'},body:JSON.stringify(body)}:{}));return{status:r.status,data:await r.json()}}
+async function liveReq(path,body,user='bob'){identity=user?{userId:user,isAdmin:user==='admin',email:user+'@test.invalid'}:null;const r=await live.liveRoute(new Request('https://econect.test/api/live/'+path,body?{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://econect.test'},body:JSON.stringify(body)}:{}));return{status:r.status,data:await r.json()}}
 const bookedTime=Date.now()+3600000,bookingId=crypto.randomUUID(),booking={id:bookingId,hours:1,scheduled:bookedTime,coinPrice:1500};
 const beforeDisabled=balance('bob');assert.equal((await liveReq('book',booking)).status,503);assert.deepEqual(balance('bob'),beforeDisabled);
 fakeEnv.STREAM_ACCOUNT_ID='test-account';fakeEnv.STREAM_API_TOKEN='test-token';
@@ -71,9 +71,9 @@ assert.equal((await liveReq('engage',{...commentAction,text:'Changed'},'carol'))
 assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID(),text:' '},'carol')).status,400);
 assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID(),text:'x'.repeat(501)},'carol')).status,400);
 assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},null)).status,401);
-assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},'bob')).status,400);
+const hostBefore=balance('bob');assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},'bob')).status,200);assert.deepEqual(balance('bob'),hostBefore);
 const engagement=(await liveReq('engagements?id='+bookingId,undefined,'carol')).data;
-assert.equal(engagement.likes,2);assert.equal(engagement.comments,1);assert.equal(engagement.liked,true);assert.equal(engagement.rows[0].text,'Hello live!');
+assert.equal(engagement.likes,2);assert.equal(engagement.comments,2);assert.equal(engagement.liked,true);assert.equal(engagement.rows[0].text,'Hello live!');
 // Insufficient funds rolls back the comment and all ledger changes.
 const savedCarol=balance('carol');sqlite.prepare("UPDATE profiles SET balance=0,bonus=19 WHERE id='carol'").run();
 const poorAction={...commentAction,id:crypto.randomUUID()},beforePoor=total('bob');
@@ -86,6 +86,39 @@ sqlite.prepare("UPDATE profiles SET balance=?,bonus=? WHERE id='carol'").run(sav
 sqlite.prepare('UPDATE live_bookings SET heartbeat=0 WHERE id=?').run(bookingId);
 assert.equal((await liveReq('engage',{...commentAction,id:crypto.randomUUID()},'carol')).status,400);
 sqlite.prepare('UPDATE live_bookings SET heartbeat=? WHERE id=?').run(Date.now(),bookingId);
+// Gift Club schedules are admin-only and member payments use the server schedule.
+const clubEvent=crypto.randomUUID(),clubTime=Date.now()+7*86400000;
+assert.equal((await liveReq('club-admin',{id:clubEvent,scheduled:clubTime,hours:4},'carol')).status,403);
+assert.equal((await liveReq('club-admin',{id:clubEvent,scheduled:clubTime,hours:4},'admin')).status,200);
+assert.equal((await liveReq('club-admin',{id:clubEvent,scheduled:clubTime+3600000,hours:4},'admin')).status,200);
+const club=(await liveReq('club',undefined,null)).data;assert.equal(club.events[0].scheduled,clubTime+3600000);
+sqlite.prepare("UPDATE profiles SET balance=199,bonus=10000 WHERE id='carol'").run();
+const clubJoin={id:crypto.randomUUID(),event:clubEvent,coinPrice:1500};
+assert.equal((await liveReq('club-join',clubJoin,'carol')).status,400);assert.equal(balance('carol').balance,199);assert.equal(balance('carol').bonus,10000);
+sqlite.prepare("UPDATE profiles SET balance=250 WHERE id='carol'").run();
+assert.equal((await liveReq('club-join',clubJoin,'carol')).status,200);assert.equal(balance('carol').balance,50);assert.equal(balance('carol').bonus,10000);
+assert.equal((await liveReq('club-join',{...clubJoin,id:crypto.randomUUID()},'carol')).status,200);assert.equal(balance('carol').balance,50);
+assert.equal((await liveReq('club-admin',{id:clubEvent,scheduled:clubTime+7200000,hours:4},'admin')).status,400);
+let announced=(await liveReq('list',undefined,null)).data.rows.filter(b=>b.giftclub_event===clubEvent);assert.equal(announced.length,1);assert.equal(announced[0].username,'carol');assert.equal(announced[0].scheduled,clubTime+3600000);
+const clubDirect={id:crypto.randomUUID(),kind:'live',coins:2,coinPrice:1500,giftclubEvent:clubEvent};
+assert.equal((await req('paystack/initialize',{...clubDirect,id:crypto.randomUUID(),coins:1},'alice')).status,400);
+const joinDirect=await req('paystack/initialize',clubDirect,'alice');assert.equal(joinDirect.status,200);const clubRef=joinDirect.data.reference;assert.equal(transactions.get(clubRef).amount,300000);
+announced=(await liveReq('list',undefined,null)).data.rows.filter(b=>b.giftclub_event===clubEvent);assert.equal(announced.length,1);
+transactions.get(clubRef).status='success';const aliceBefore=balance('alice');await event(clubRef);await event(clubRef);assert.deepEqual(balance('alice'),aliceBefore);
+announced=(await liveReq('list',undefined,null)).data.rows.filter(b=>b.giftclub_event===clubEvent);assert.equal(announced.length,2);assert.ok(announced.some(b=>b.username==='alice'));
+assert.equal((await liveReq('club',undefined,'alice')).data.mine.length,1);assert.equal((await liveReq('club',undefined,'bob')).data.mine.length,0);
+assert.equal((await liveReq('engagements?id='+bookingId,undefined,null)).data.likers[0].id,'carol');
+// The public Worker returns a clean insufficient-eCoin response for paid actions.
+globalThis.__workerRoutes={liveRoute:live.liveRoute,expireLive:live.expireLive,GET:social.GET,POST:social.POST,marketRoute:market.marketRoute,wealthRoute:wealth.wealthRoute,paystackRoute:pay.paystackRoute};
+let workerCode=readFileSync('server/worker.ts','utf8').replace(/^import[^\n]*\n/gm,'');
+workerCode='const {liveRoute,expireLive,GET,POST,marketRoute,wealthRoute,paystackRoute}=globalThis.__workerRoutes; const withdrawalRoute=()=>{},referralRoute=()=>{},authRoute=()=>{};'+workerCode;
+const worker=await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(workerCode,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText).toString('base64'));
+sqlite.prepare("UPDATE profiles SET balance=0,bonus=0 WHERE id='carol'").run();identity={userId:'carol'};
+const noFunds=await worker.default.fetch(new Request('https://econect.test/api/live/engage',{method:'POST',headers:{Origin:'https://econect.test','Content-Type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),booking:bookingId,kind:'comment',text:'Not enough'})}),fakeEnv);
+assert.equal(noFunds.status,402);assert.deepEqual(await noFunds.json(),{error:'Insufficient eCoin',code:'INSUFFICIENT_ECOIN'});
+const likeFeed=await worker.default.fetch(new Request('https://econect.test/api/like-events'),fakeEnv);assert.equal(likeFeed.status,200);assert.ok(Array.isArray(await likeFeed.json()));
+delete globalThis.__workerRoutes;
+console.log('PASS: free host comments, clickable liker identities, admin Gift Club schedules, bonus exclusion, exact wallet debit, direct payment verification and confirmed-only announcements.');
 // Provider API integration is simulated; permanent publishing keys must not be returned to clients.
 const paystackMock=globalThis.fetch;let deleted=0;globalThis.fetch=async(url,opts={})=>{const u=new URL(url);if(u.hostname==='api.cloudflare.com'){if(opts.method==='DELETE'){deleted++;return Response.json({success:true})}return Response.json({success:true,result:{uid:'live-input',webRTC:{url:'https://customer-test.cloudflarestream.com/secret/webRTC/publish'},webRTCPlayback:{url:'https://customer-test.cloudflarestream.com/live-input/webRTC/play'}}})}if(u.hostname.endsWith('.cloudflarestream.com'))return new Response('v=0\r\nanswer');return paystackMock(url,opts)};
 const started=await liveReq('broadcast',{id:bookingId,sdp:'v=0\r\noffer'});assert.equal(started.status,200);assert.equal(started.data.sdp,'v=0\r\nanswer');assert.ok(!JSON.stringify(started.data).includes('secret'));assert.equal((await liveReq('heartbeat',{id:bookingId})).status,200);assert.ok((await liveReq('play?id='+bookingId,undefined,null)).data.url.includes('/webRTC/play'));
