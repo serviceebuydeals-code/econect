@@ -52,3 +52,5 @@
 
 .post:has(.post-media){background:transparent;box-shadow:none}
 .post-video-player .post-video-sound:has(span){width:auto;max-width:155px;border-radius:18px;padding:0 10px;gap:6px;line-height:1;font-size:12px;white-space:nowrap}.post-video-player .post-video-sound:has(span)~.post-video-seek{width:calc(100% - 165px)}
+
+.post[id]{scroll-margin-top:90px}
