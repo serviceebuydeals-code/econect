@@ -30,10 +30,10 @@ let before=sqlite.prepare('SELECT sum(balance) total FROM profiles').get().total
 sqlite.prepare("UPDATE profiles SET balance=balance+1000 WHERE id='alice'").run();assert.equal((await request('gift',{coins:1,kind:'gift',recipient:'bob'},'alice')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,910);
 const chat=(await request('chat',{recipient:'bob'},'alice')).data;assert.equal((await request('messages?id='+chat.id,undefined,'carol')).status,404);
 await request('message',{conversation:chat.id,kind:'text',body:'Hello'},'alice');await request('message',{conversation:chat.id,kind:'text',body:'Hi!'},'bob');assert.equal(sqlite.prepare('SELECT sum(texts) texts FROM conversation_usage WHERE conversation=?').get(chat.id).texts,2);
-sqlite.prepare('UPDATE conversations SET texts=1000,seconds=60 WHERE id=?').run(chat.id);const settled=await request('end-chat',{conversation:chat.id},'bob');assert.equal(settled.data.points,8);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,902);assert.equal((await request('end-chat',{conversation:chat.id},'alice')).status,400);
+sqlite.prepare('UPDATE conversations SET texts=1000,seconds=60 WHERE id=?').run(chat.id);const settled=await request('end-chat',{conversation:chat.id},'bob');assert.equal(settled.data.points,0);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='alice'").get().balance,910);assert.equal((await request('end-chat',{conversation:chat.id},'alice')).status,400);
 assert.equal((await request('admin/branding',{logo:'/api/media?key=public%2Ftest',favicon:''},'admin')).status,200);assert.equal((await request('admin/branding',{logo:'https://example.invalid',favicon:''},'admin')).status,400);
 const bootstrap=(await request('bootstrap')).data;assert.ok(!('age' in bootstrap.members[0]));assert.equal(bootstrap.voters.length,1);assert.equal(bootstrap.contestants[0].id,'bob');assert.equal(bootstrap.branding.logo,'/api/media?key=public%2Ftest');
-console.log('PASS: signup, access checks, duplicate likes, comment/reply points, payment confirmation, vote ranking, overdraft rollback, gifts, conversation billing/privacy, branding, public field privacy.');
+console.log('PASS: signup, access checks, duplicate likes, comment/reply points, payment confirmation, vote ranking, overdraft rollback, gifts, free conversation/privacy, branding, public field privacy.');
 // Bonus remains non-withdrawable through gifts and mixed-source settlement.
 await request('signup',{...form,name:'Dave',username:'dave'},'dave');
 assert.equal((await request('wallet',undefined,'dave')).data.bonus,200);const remaining=(await request('balance',undefined,'dave')).data;assert.equal(remaining.total,200);assert.equal(remaining.balance,0);assert.equal(remaining.bonus,200);
@@ -82,21 +82,21 @@ assert.equal((await request('profile',{avatar:'',bio:'',name:'Bob',surname:'Test
 sqlite.prepare("UPDATE profiles SET identity_changed_at=datetime('now','-31 days') WHERE id='alice'").run();
 assert.equal((await request('profile',{avatar:'',bio:'',name:'Alice Again',surname:'Smith',username:'aliceshop'},'alice')).status,200);
 console.log('PASS: profile identity cooldown, case-insensitive username uniqueness, and unrestricted bio changes.');
-// Voice notes charge one point and credit the conversation recipient.
+// Voice notes are free for both conversation participants.
 for(const u of ['voicepayer','voicereceiver'])assert.equal((await request('signup',{...form,name:u,username:u},u)).status,200);
 const voiceChat=(await request('chat',{recipient:'voicereceiver'},'voicepayer')).data.id;
 const voiceBody={conversation:voiceChat,kind:'voice',body:'/api/media?key=private%2Fvoice',duration:60};
 assert.equal((await request('message',voiceBody,'voicepayer')).status,200);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicepayer'").get().bonus,199);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,201);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicepayer'").get().bonus,200);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,200);
 assert.equal((await request('message',{...voiceBody,duration:61},'voicepayer')).status,200);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,203);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,200);
 assert.equal((await request('message',{...voiceBody,duration:1800},'voicepayer')).status,200);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,233);
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,200);
 assert.equal((await request('message',{...voiceBody,duration:1801},'voicepayer')).status,400);
 assert.equal((await request('message',{...voiceBody,duration:0},'voicepayer')).status,400);
-assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,233);
-console.log('PASS: voice note minute rounding, transfers and 30-minute limit.');
+assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='voicereceiver'").get().bonus,200);
+console.log('PASS: free voice notes and 30-minute limit.');
 // Actor-funded interactions and durable unread state.
 for(const u of ['actorone','actortwo','actorpoor'])assert.equal((await request('signup',{...form,name:u,username:u},u)).status,200);
 sqlite.prepare("UPDATE profiles SET balance=100,bonus=0 WHERE id IN('actorone','actortwo')").run();sqlite.prepare("UPDATE profiles SET balance=0,bonus=0 WHERE id='actorpoor'").run();
@@ -108,11 +108,11 @@ assert.equal((await request('like',{post:fundedPost},'actorpoor')).status,400);a
 assert.equal((await request('comment',{post:fundedPost,body:'Paid comment'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 assert.equal((await request('comment',{post:fundedPost,body:'No funds'},'actorpoor')).status,400);assert.equal(sqlite.prepare("SELECT count(*) n FROM comments WHERE user='actorpoor'").get().n,0);
 const actorChat=(await request('chat',{recipient:'actortwo'},'actorone')).data.id;
-assert.equal((await request('message',{conversation:actorChat,kind:'voice',body:'/api/media?key=private%2Fv',duration:61},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,86);
+assert.equal((await request('message',{conversation:actorChat,kind:'voice',body:'/api/media?key=private%2Fv',duration:61},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 sqlite.prepare('INSERT INTO conversation_usage(conversation,user,texts) VALUES(?,?,999)').run(actorChat,'actortwo');
-assert.equal((await request('message',{conversation:actorChat,kind:'text',body:'Paid text'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,82);
-assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,200);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,78);
-assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,78);
+assert.equal((await request('message',{conversation:actorChat,kind:'text',body:'Free text'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
+assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,200);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
+assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 assert.equal((await request('chats',undefined,'actorone')).status,200);assert.equal((await request('unread',undefined,'actorone')).data.messages,2);
 const snapshot=(await request('messages?id='+actorChat,undefined,'actorone')).data;
 assert.equal((await request('unread',undefined,'actorone')).data.messages,2); // fetching alone does not clear unread
