@@ -10,6 +10,7 @@ const alice=sql.prepare("SELECT * FROM auth_users WHERE email='alice@example.tes
 const raw='a'.repeat(64);sql.prepare('INSERT INTO auth_reset_tokens(token_hash,user_id,expires) VALUES(?,?,?)').run(await auth.digest(raw),alice.id,Date.now()+100000);assert.equal((await req('reset',{token:raw,password:'A completely new test password!'})).status,200);assert.equal((await req('reset',{token:raw,password:'Another long test password!'})).status,400);assert.equal((await req('login',{email:'alice@example.test',password})).status,401);assert.equal((await req('login',{email:'alice@example.test',password:'A completely new test password!'})).status,200);
 assert.equal((await req('forgot',{email:'alice@example.test'})).status,503);
 // Capture reset emails locally; no messages are sent to a real provider.
+sql.exec('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
 sql.exec('CREATE TABLE profiles(id TEXT PRIMARY KEY,username TEXT UNIQUE COLLATE NOCASE)');
 sql.prepare('INSERT INTO profiles(id,username) VALUES(?,?)').run(alice.id,'AliceName');
 Object.assign(globalThis.__authEnv,{RESEND_API_KEY:'test-only-key',EMAIL_FROM:'eConect <noreply@example.test>',APP_ORIGIN:'https://econect.test'});
@@ -25,6 +26,18 @@ assert.equal((await req('forgot',{identifier:'OWNER@EXAMPLE.TEST'})).status,200)
 const issued=new URL(sent[0].text.match(/https:\/\/\S+/)[0]).searchParams.get('reset');assert.ok(sql.prepare('SELECT token_hash FROM auth_reset_tokens WHERE token_hash=?').get(await auth.digest(issued)));
 assert.equal((await req('reset',{token:issued,password:'Recovered with username password!'})).status,200);assert.equal((await req('reset',{token:issued,password:'Recovered with username password!'})).status,400);
 assert.equal((await req('login',{email:'alice@example.test',password:'Recovered with username password!'})).status,200);
+// Provider rejections are recorded for admins and failed requests do not consume reset attempts.
+assert.equal((await req('email-status',{})).status,403);
+let status=await req('email-status',{}, {cookie});assert.equal(status.status,200);let detail=await status.json();assert.equal(detail.hasKey,true);assert.equal(JSON.stringify(detail).includes('test-only-key'),false);assert.equal(detail.last.state,'accepted');
+sql.prepare("DELETE FROM auth_attempts WHERE key LIKE 'forgot:%' OR key LIKE 'forgot-user:%'").run();
+const sentBefore=sql.prepare('SELECT count(*) n FROM auth_reset_tokens').get().n;
+const log=console.error;console.error=()=>{};
+for(const [http,message,reason] of [[403,'The econect.test domain is not verified','domain_unverified'],[401,'API key is invalid','invalid_key'],[403,'You can only send testing emails to your own email address','testing_only'],[429,'Too many requests','rate_limit']]){
+ globalThis.fetch=async()=>Response.json({message},{status:http});assert.equal((await req('forgot',{identifier:'AliceName'})).status,200);
+ detail=await(await req('email-status',{}, {cookie})).json();assert.equal(detail.last.reason,reason);assert.equal(sql.prepare('SELECT count(*) n FROM auth_reset_tokens').get().n,sentBefore);assert.equal(sql.prepare("SELECT count FROM auth_attempts WHERE key=?").get('forgot-user:'+alice.id).count,0);
+}
+globalThis.fetch=async()=>{throw Error('Network failed with sensitive detail')};assert.equal((await req('forgot',{identifier:'AliceName'})).status,200);detail=await(await req('email-status',{}, {cookie})).json();assert.equal(detail.last.reason,'network');assert.equal(JSON.stringify(detail).includes('sensitive'),false);console.error=log;
+console.log('PASS: admin-only delivery diagnostics, safe rejection categories, no secret disclosure, failed-token removal and reset retries after provider errors.');
 globalThis.fetch=originalFetch;
 console.log('PASS: email and case-insensitive username/@username recovery sends only to the registered email, preserves generic responses, limits aliases per account, and issues working single-use reset links (email provider simulated).');
 await req('logout',{}, {cookie});assert.equal(await auth.getUser(new Request('https://econect.test',{headers:{cookie}})),null);
