@@ -33,6 +33,8 @@
   ],
   "keep_vars": true,
   "vars": {
+    "APP_ORIGIN": "https://econectapp.com",
+    "EMAIL_FROM": "eConect <noreply@econectapp.com>",
     "STREAM_ACCOUNT_ID": "143eedba9d8f1ec442c0ec8d3191330f"
   }
 }
