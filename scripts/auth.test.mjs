@@ -13,10 +13,15 @@ assert.equal((await req('forgot',{email:'alice@example.test'})).status,503);
 sql.exec('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
 sql.exec('CREATE TABLE profiles(id TEXT PRIMARY KEY,username TEXT UNIQUE COLLATE NOCASE)');
 sql.prepare('INSERT INTO profiles(id,username) VALUES(?,?)').run(alice.id,'AliceName');
+for(const identifier of ['AliceName',' @ALICENAME ','ALICE@EXAMPLE.TEST'])assert.equal((await req('login',{identifier,password:'A completely new test password!'})).status,200);
+assert.equal((await req('login',{identifier:'AliceName',password:'wrong'})).status,401);
+assert.equal(sql.prepare("SELECT count FROM auth_attempts WHERE key='login:alice@example.test'").get().count,1);
+assert.equal((await req('login',{email:'alice@example.test',password:'wrong'})).status,401);
+assert.equal(sql.prepare("SELECT count FROM auth_attempts WHERE key='login:alice@example.test'").get().count,2);
 Object.assign(globalThis.__authEnv,{RESEND_API_KEY:'test-only-key',EMAIL_FROM:'eConect <noreply@example.test>',APP_ORIGIN:'https://econect.test'});
 const originalFetch=globalThis.fetch,sent=[];globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.resend.com/emails');sent.push(JSON.parse(options.body));return Response.json({id:'mock-email'})};
 for(const body of [{email:' ALICE@EXAMPLE.TEST '},{identifier:' AliceName '},{identifier:'@ALICENAME'}]){r=await req('forgot',body);assert.equal(r.status,200);assert.deepEqual(await r.json(),{ok:true})}
-assert.equal(sent.length,3);for(const message of sent){assert.equal(message.to,'alice@example.test');assert.match(message.text,/https:\/\/econect\.test\/\?reset=[a-f0-9]{64}/);assert.equal(message.text.includes('@ALICENAME'),false)}
+assert.equal(sent.length,3);for(const message of sent){assert.ok(message.html.includes('src="https://econect.test/icon-192.png"'));assert.ok(message.html.includes('href="https://econect.test/?reset='));assert.equal(message.to,'alice@example.test');assert.match(message.text,/https:\/\/econect\.test\/\?reset=[a-f0-9]{64}/);assert.equal(message.text.includes('@ALICENAME'),false)}
 // Switching between username and email cannot bypass the account's reset limit.
 assert.equal((await req('forgot',{identifier:'ALICE@EXAMPLE.TEST'})).status,200);assert.equal(sent.length,3);
 for(const identifier of ['missinguser','missing@example.test',"alice' OR 1=1 --"]){const response=await req('forgot',{identifier});assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true})}assert.equal(sent.length,3);
