@@ -1,8 +1,11 @@
-async function request(path:string,body:any,signal?:AbortSignal){const response=await fetch('/api/stream/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const result:any=await response.json();if(!response.ok)throw Error(result.error||'Video upload failed.');return result}
-export async function uploadStreamVideo(file:Blob,name:string,progress:(n:number)=>void,signal:AbortSignal,kind='post',conversation?:string){
+async function request(path:string,body:any,signal?:AbortSignal){const response=await fetch('/api/stream/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});const result:any=await response.json();if(!response.ok)throw Object.assign(Error(result.error||'Video upload failed.'),{status:response.status});return result}
+export async function uploadStreamVideo(file:Blob,name:string,progress:(n:number)=>void,signal:AbortSignal,kind='post',conversation?:string,fallback?:()=>Promise<any>){
  if(signal.aborted)throw new DOMException('Cancelled.','AbortError');
  if(file.size>=30000000)throw Error('Choose a video below 30 MB.');
- progress(0);const created=await request('create',{kind,conversation},signal);
+ progress(0);let created:any;
+ try{created=await request('create',{kind,conversation},signal)}
+ catch(error:any){if(fallback&&!signal.aborted&&(error.status>=500||error instanceof TypeError||error instanceof SyntaxError))return fallback();throw error}
+ let transferred=false;
  try{
   await new Promise<void>((resolve,reject)=>{
    const xhr=new XMLHttpRequest(),form=new FormData();form.append('file',file,name);
@@ -15,6 +18,7 @@ export async function uploadStreamVideo(file:Blob,name:string,progress:(n:number
    xhr.onabort=()=>{cleanup();reject(new DOMException('Cancelled.','AbortError'))};
    signal.addEventListener('abort',abort,{once:true});if(signal.aborted){cleanup();reject(new DOMException('Cancelled.','AbortError'));return}xhr.send(form);
   });
+  transferred=true;
   const deadline=Date.now()+600000;let count=0;
   while(Date.now()<deadline){
    const result=await request('status',{id:created.id},signal);
@@ -23,5 +27,5 @@ export async function uploadStreamVideo(file:Blob,name:string,progress:(n:number
    await new Promise<void>((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new DOMException('Cancelled.','AbortError'))};const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve()},2500);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort()});
   }
   throw Error('Video processing is taking longer than expected. Please retry shortly.');
- }catch(error){void request('cancel',{id:created.id}).catch(()=>{});throw error}
+ }catch(error){void request('cancel',{id:created.id}).catch(()=>{});if(fallback&&!transferred&&!signal.aborted&&(error as Error).name!=='AbortError')return fallback();throw error}
 }
