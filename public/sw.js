@@ -6,12 +6,12 @@ self.addEventListener('push',event=>{
  const isCall=data.kind==='call'&&(!data.expires||data.expires>Date.now());
  const url=new URL(data.url||'/',self.location.origin);
  const target=url.origin===self.location.origin?url.pathname+url.search:'/';
- event.waitUntil(self.registration.showNotification(data.kind==='call'&&!isCall?'Missed call':data.title||'eConect',{
+ event.waitUntil((async()=>{let shown=false;try{await self.registration.showNotification(data.kind==='call'&&!isCall?'Missed call':data.title||'eConect',{
   body:data.expires&&data.expires<Date.now()?'Open eConect to check your updates.':data.body||'You have a new update.',
   icon:'/icon-192.png',badge:'/notification-badge.png',tag:data.tag||'econect-update',
   silent:false,data:{url:target,kind:data.kind,callId:data.callId},renotify:true,
   ...(isCall?{requireInteraction:true,vibrate:[700,200,700,200,700],actions:[{action:'open-call',title:'Open call'},{action:'decline-call',title:'Decline'}]}:{})
- }));
+ });shown=true}finally{if(/^[a-f0-9-]{36}$/i.test(data.receiptToken||'')){try{let visible=null;try{visible=(await self.clients.matchAll({type:'window',includeUncontrolled:true})).some(client=>client.visibilityState==='visible')}catch{}await fetch('/api/push/receipt',{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:data.receiptToken,shown,visible})})}catch{}}}})());
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();

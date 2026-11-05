@@ -71,6 +71,15 @@ assert.equal(sends,beforeBackground+1,'the server dispatches the queued test wit
 diagnostics=await(await req('status',sub)).json();assert.equal(diagnostics.latestTest.delivery_state,'accepted');assert.equal(diagnostics.latestTest.provider_status,201);
 assert.equal(diagnostics.latestTest.done,1);await push.dispatchPush(env);assert.equal(sends,beforeBackground+1,'the background test sends once');
 
+const receiptToken=capturedPayload.receiptToken;assert.match(receiptToken,/^[a-f0-9-]{36}$/i);
+assert.equal('receipt_token' in diagnostics.latestTest,false,'receipt capability stays out of status responses');
+user=null;assert.equal((await req('receipt',{token:receiptToken,shown:true,visible:false},'https://evil.test')).status,403);
+assert.equal((await req('receipt',{token:'invalid',shown:true})).status,400);
+assert.equal((await req('receipt',{token:crypto.randomUUID(),shown:true})).status,200);assert.equal(sqlite.prepare('SELECT device_state FROM push_deliveries WHERE id=?').get(queuedData.id).device_state,'');
+assert.equal((await req('receipt',{token:receiptToken,shown:true,visible:false})).status,200,'worker receipt works without a login session');
+assert.equal((await req('receipt',{token:receiptToken,shown:false,visible:true})).status,200);
+user={userId:'bob'};const receiptStatus=await(await req('status',sub)).json();assert.equal(receiptStatus.latestTest.device_state,'shown');assert.equal(receiptStatus.latestTest.device_page_visible,0);assert.ok(receiptStatus.latestTest.device_reported_at,'receipt is timestamped');assert.equal(receiptStatus.latestTest.device_state,'shown','the first receipt cannot be overwritten');
+const staleToken=crypto.randomUUID();sqlite.prepare("UPDATE push_deliveries SET receipt_token=?,device_state='',created=unixepoch()-3601 WHERE id=?").run(staleToken,queuedData.id);await req('receipt',{token:staleToken,shown:true});assert.equal(sqlite.prepare('SELECT device_state FROM push_deliveries WHERE id=?').get(queuedData.id).device_state,'','old capabilities expire after an hour');
 user=null;assert.equal((await req('subscribe',sub)).status,401);
 const listeners={},shown=[],opened=[];const scope={location:{origin:'https://econectapp.com'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
 let declineRequest;vm.runInNewContext(readFileSync('public/sw.js','utf8'),{self:scope,URL,Date,fetch:async(url,options)=>{declineRequest={url,options};return new Response(null,{status:200})}});
@@ -80,3 +89,11 @@ listeners.push({data:{json:()=>({url:'https://evil.test/'})},waitUntil:p=>pendin
 listeners.push({data:{json:()=>({kind:'call',callId,url:'/?notification=messages',expires:Date.now()+60000})},waitUntil:p=>pending=p});await pending;assert.equal(shown.at(-1).options.requireInteraction,true);assert.equal(shown.at(-1).options.actions[1].action,'decline-call');
 listeners.notificationclick({action:'decline-call',notification:{close(){},data:{callId,url:'/?notification=messages'}},waitUntil:p=>pending=p});await pending;assert.equal(declineRequest.url,'/api/calls/hangup');assert.equal(declineRequest.options.credentials,'include');assert.equal(JSON.parse(declineRequest.options.body).id,callId);assert.equal(JSON.parse(declineRequest.options.body).decline,true);
 console.log('PASS: Web Push encryption/decryption, VAPID signature, SSRF rejection, ownership/auth, idempotent registration, recipient-only triggers, leases, read suppression, retries, expiry cleanup and background service-worker notification/click.');
+
+const receiptPayload={...payload,receiptToken:crypto.randomUUID()};
+listeners.push({data:{json:()=>receiptPayload},waitUntil:p=>pending=p});await pending;
+assert.equal(declineRequest.url,'/api/push/receipt');assert.equal(declineRequest.options.credentials,'omit');
+assert.equal(JSON.parse(declineRequest.options.body).shown,true);assert.equal(JSON.parse(declineRequest.options.body).visible,false);
+scope.registration.showNotification=async()=>{throw Error('display denied')};
+listeners.push({data:{json:()=>receiptPayload},waitUntil:p=>pending=p});await assert.rejects(pending,/display denied/);assert.equal(JSON.parse(declineRequest.options.body).shown,false,'a display failure still reports receipt without pretending the notification was shown');
+console.log('PASS: encrypted one-use test receipts work without app sessions, reject cross-origin/invalid requests, expire, remain private and distinguish display failure and foreground/background handling.');

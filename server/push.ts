@@ -7,6 +7,17 @@ async function keys(db:D1Database){
  return await db.prepare('SELECT public_key,private_key FROM push_keys WHERE id=1').first<any>();
 }
 export async function pushRoute(r:Request,env:Cloudflare.Env){
+ // A one-use capability inside the encrypted test payload acknowledges only that test.
+ // It does not depend on login cookies or require the app page to be open.
+ const receiptURL=new URL(r.url);
+ if(receiptURL.pathname==='/api/push/receipt'){
+  if(r.method!=='POST'||r.headers.get('Origin')!==receiptURL.origin)return new Response('Invalid request',{status:403});
+  try{const raw=await r.text();if(raw.length>256)return new Response('Too large',{status:413});const b=JSON.parse(raw);
+   if(!/^[a-f0-9-]{36}$/i.test(String(b.token||''))||typeof b.shown!=='boolean')return new Response('Invalid receipt',{status:400});
+   await env.DB.prepare("UPDATE push_deliveries SET device_state=?,device_reported_at=unixepoch(),device_page_visible=? WHERE receipt_token=? AND kind='test' AND device_state='' AND created>unixepoch()-3600").bind(b.shown?'shown':'display_failed',typeof b.visible==='boolean'?(b.visible?1:0):null,b.token).run();
+   return Response.json({ok:true});
+  }catch{return Response.json({error:'Receipt unavailable.'},{status:400})}
+ }
  const auth=await getUser(r);if(!auth)return Response.json({error:'Please log in.'},{status:401,headers:{'X-eConect-Push-Version':'2'}});
  const url=new URL(r.url),path=url.pathname.slice('/api/push/'.length),db=env.DB,uid=auth.userId;
  if(r.method==='GET'&&path==='key')return Response.json({publicKey:(await keys(db)).public_key});
@@ -18,7 +29,7 @@ export async function pushRoute(r:Request,env:Cloudflare.Env){
  if(path==='disable'){await db.batch([db.prepare('DELETE FROM push_deliveries WHERE subscription IN(SELECT id FROM push_subscriptions WHERE user=? AND endpoint=?)').bind(uid,endpoint),db.prepare('DELETE FROM push_subscriptions WHERE user=? AND endpoint=?').bind(uid,endpoint)]);return Response.json({ok:true})}
  if(path==='status'){
   const device=await db.prepare('SELECT id FROM push_subscriptions WHERE endpoint=? AND user=?').bind(endpoint,uid).first<any>();
-  const latestTest=device?await db.prepare("SELECT id,created,delivery_state,provider_status,attempts,done,next_attempt FROM push_deliveries WHERE subscription=? AND user=? AND kind='test' ORDER BY id DESC LIMIT 1").bind(device.id,uid).first():null;
+  const latestTest=device?await db.prepare("SELECT id,created,delivery_state,provider_status,attempts,done,next_attempt,device_state,device_reported_at,device_page_visible FROM push_deliveries WHERE subscription=? AND user=? AND kind='test' ORDER BY id DESC LIMIT 1").bind(device.id,uid).first():null;
   return Response.json({enabled:!!device,latestTest});
  }
  if(path==='subscribe'){
@@ -38,10 +49,10 @@ export async function pushRoute(r:Request,env:Cloudflare.Env){
   const recent=await db.prepare("SELECT id FROM push_deliveries WHERE subscription=? AND kind='test' AND (created>unixepoch()-60 OR (done=0 AND attempts<6))").bind(s.id).first();if(recent)return Response.json({error:'Wait one minute before another test.'},{status:429});
   // Persist the delayed test for the server cron; closing the app cannot cancel it.
   if(path==='test-background'){
-   const delivery=await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,next_attempt) VALUES(?,?,'test','background-test',unixepoch()+30) RETURNING id").bind(s.id,uid).first<any>();
+   const delivery=await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,next_attempt,receipt_token) VALUES(?,?,'test','background-test',unixepoch()+30,?) RETURNING id").bind(s.id,uid,crypto.randomUUID()).first<any>();
    return Response.json({ok:true,state:'queued',id:delivery.id,afterSeconds:30,bySeconds:90});
   }
-  const delivery=await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source) VALUES(?,?,'test','test') RETURNING id").bind(s.id,uid).first<any>();
+  const delivery=await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,receipt_token) VALUES(?,?,'test','test',?) RETURNING id").bind(s.id,uid,crypto.randomUUID()).first<any>();
   await dispatchPush(env,delivery.id);
   const result=await db.prepare('SELECT delivery_state,provider_status FROM push_deliveries WHERE id=? AND user=?').bind(delivery.id,uid).first<any>();
   if(result?.delivery_state==='accepted')return Response.json({ok:true,state:'accepted'});
@@ -74,7 +85,7 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
    if(row.kind==='activity'){const a=await db.prepare('SELECT n.read_at,n.label,(SELECT p.username FROM gift_ledger_senders g JOIN profiles p ON p.id=g.sender_id WHERE g.ledger_id=n.ledger_id LIMIT 1) gift_sender_username FROM activity_notifications n WHERE n.id=? AND n.user=?').bind(row.source,row.user).first<any>();if(!a||a.read_at){await finish();return}giftSender=a.gift_sender_username||'';activityLabel=a.label||''}
    // Keep personal message content off the lock screen.
    const body=row.kind==='call'?(callerName?callerName+' is calling you.':'You have an incoming call.'):row.kind==='message'?'You have a new message.':row.kind==='test'?'eConect notification delivery test.':activityLabel.startsWith('Missed ')?activityLabel:activityLabel.startsWith('Admin: new wallet withdrawal')?'New wallet withdrawal request. Open Withdrawals in Admin studio.':activityLabel.startsWith('Admin:')?'New activity needs your review in Admin studio.':giftSender?'You received an eCoin gift from @'+giftSender+'.':'You have new activity.';
-   const payload={title:row.kind==='call'?(callVideo?'Incoming video call':'Incoming audio call'):activityLabel.startsWith('Missed ')?'Missed call':activityLabel.startsWith('Admin:')?'eConect admin':'eConect',body,kind:row.kind,callId,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):'')+(callId?'&call='+encodeURIComponent(callId):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
+   const payload={...(row.kind==='test'&&row.receipt_token?{receiptToken:row.receipt_token}:{}),title:row.kind==='call'?(callVideo?'Incoming video call':'Incoming audio call'):activityLabel.startsWith('Missed ')?'Missed call':activityLabel.startsWith('Admin:')?'eConect admin':'eConect',body,kind:row.kind,callId,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):'')+(callId?'&call='+encodeURIComponent(callId):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
    const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:'high'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
    if(response.ok){await finish('accepted',response.status);return}
