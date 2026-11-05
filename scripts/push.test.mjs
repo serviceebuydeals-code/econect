@@ -97,3 +97,20 @@ assert.equal(JSON.parse(declineRequest.options.body).shown,true);assert.equal(JS
 scope.registration.showNotification=async()=>{throw Error('display denied')};
 listeners.push({data:{json:()=>receiptPayload},waitUntil:p=>pending=p});await assert.rejects(pending,/display denied/);assert.equal(JSON.parse(declineRequest.options.body).shown,false,'a display failure still reports receipt without pretending the notification was shown');
 console.log('PASS: encrypted one-use test receipts work without app sessions, reject cross-origin/invalid requests, expire, remain private and distinguish display failure and foreground/background handling.');
+
+// New calls get a dedicated immediate lane and short retries, independently of activity backlog.
+sqlite.exec("UPDATE push_deliveries SET done=1 WHERE done=0");
+for(let n=0;n<25;n++)sqlite.prepare("INSERT INTO activity_notifications(user,label) VALUES('bob',?)").run('Backlog '+n);
+const fastId=crypto.randomUUID();
+sqlite.prepare('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen) VALUES(?,?,?,?,?,?,?,?)').run(fastId,'chat','alice','bob',0,Date.now(),Date.now()+60000,Date.now());
+let fastSends=0;globalThis.fetch=async()=>{fastSends++;assert.equal(capturedPayload.callId,fastId,'fast lane never sends unrelated notifications');return new Response(null,{status:fastSends===1?503:201})};
+await push.dispatchPush(env,undefined,fastId);
+const retry=sqlite.prepare("SELECT next_attempt,attempts FROM push_deliveries WHERE source=?").get('rtc:'+fastId);
+assert.equal(retry.attempts,1);assert.ok(retry.next_attempt<=Math.floor(Date.now()/1000)+2,'call retry is not delayed until after ringing expires');
+await Promise.all([push.dispatchCallPush(env,fastId),push.dispatchCallPush(env,fastId)]);
+assert.equal(fastSends,2,'one transient failure is retried quickly and concurrent dispatch cannot double-send');
+assert.equal(sqlite.prepare("SELECT delivery_state FROM push_deliveries WHERE source=?").get('rtc:'+fastId).delivery_state,'accepted');
+assert.equal(sqlite.prepare("SELECT count(*) n FROM push_deliveries WHERE done=0 AND kind='activity'").get().n,25,'call dispatch bypasses the activity backlog');
+await push.dispatchCallPush(env,fastId);assert.equal(fastSends,2,'an accepted call alert is never repeated');
+sqlite.prepare("UPDATE rtc_calls SET status='ended' WHERE id=?").run(fastId);
+console.log('PASS: call alerts bypass unrelated outbox traffic, retry transient failures before ringing expires, preserve leases and never repeat accepted alerts.');

@@ -61,10 +61,10 @@ export async function pushRoute(r:Request,env:Cloudflare.Env){
  }
  return new Response('Not found',{status:404});
 }
-export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
+export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number,callId?:string){
  const db=env.DB,now=Math.floor(Date.now()/1000);
  // Atomic lease: concurrent requests and cron must not send the same row together.
- const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 AND (? IS NULL OR id=?) ORDER BY CASE WHEN kind=\'call\' THEN 0 ELSE 1 END,id LIMIT 20) RETURNING *').bind(now+60,now,deliveryId??null,deliveryId??null).all<any>()).results;
+ const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 AND (? IS NULL OR id=?) AND (? IS NULL OR (kind=\'call\' AND source=?)) ORDER BY CASE WHEN kind=\'call\' THEN 0 ELSE 1 END,id LIMIT 20) RETURNING *').bind(now+60,now,deliveryId??null,deliveryId??null,callId??null,callId?'rtc:'+callId:null).all<any>()).results;
  if(!rows.length)return;
  const signing=await keys(db);
  for(let i=0;i<rows.length;i+=4)await Promise.all(rows.slice(i,i+4).map(async row=>{
@@ -87,13 +87,29 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
    const body=row.kind==='call'?(callerName?callerName+' is calling you.':'You have an incoming call.'):row.kind==='message'?'You have a new message.':row.kind==='test'?'eConect notification delivery test.':activityLabel.startsWith('Missed ')?activityLabel:activityLabel.startsWith('Admin: new wallet withdrawal')?'New wallet withdrawal request. Open Withdrawals in Admin studio.':activityLabel.startsWith('Admin:')?'New activity needs your review in Admin studio.':giftSender?'You received an eCoin gift from @'+giftSender+'.':'You have new activity.';
    const payload={...(row.kind==='test'&&row.receipt_token?{receiptToken:row.receipt_token}:{}),title:row.kind==='call'?(callVideo?'Incoming video call':'Incoming audio call'):activityLabel.startsWith('Missed ')?'Missed call':activityLabel.startsWith('Admin:')?'eConect admin':'eConect',body,kind:row.kind,callId,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):'')+(callId?'&call='+encodeURIComponent(callId):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
-   const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:'high'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
+   const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:'high'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(row.kind==='call'?4000:10000)});
    if(response.ok){await finish('accepted',response.status);return}
    if(response.status>=300&&response.status<400){await finish('rejected',response.status);console.error('Push redirect refused',response.status);return}
    if(response.status===404||response.status===410){await db.prepare('DELETE FROM push_subscriptions WHERE id=?').bind(s.id).run();await finish('expired',response.status);return}
    if(response.status>=400&&response.status<500&&response.status!==429){await finish('rejected',response.status);console.error('Push provider rejected delivery',response.status);return}
-   await db.prepare("UPDATE push_deliveries SET next_attempt=?,delivery_state='retrying',provider_status=? WHERE id=?").bind(now+Math.min(3600,60*2**row.attempts),response.status,row.id).run();
-  }catch{await db.prepare("UPDATE push_deliveries SET delivery_state='retrying' WHERE id=?").bind(row.id).run();console.error('Push delivery failed; retry scheduled')}
+   await db.prepare("UPDATE push_deliveries SET next_attempt=?,delivery_state='retrying',provider_status=? WHERE id=?").bind(now+(row.kind==='call'?2:Math.min(3600,60*2**row.attempts)),response.status,row.id).run();
+  }catch{await db.prepare("UPDATE push_deliveries SET delivery_state='retrying',next_attempt=? WHERE id=?").bind(now+(row.kind==='call'?2:60),row.id).run();console.error('Push delivery failed; retry scheduled')}
  }));
  await db.prepare('DELETE FROM push_deliveries WHERE created<?').bind(now-172800).run();
+}
+
+// A new call bypasses unrelated outbox traffic. Retry transient failures inside
+// this request's background lifetime, rather than waiting for the minute cron.
+export async function dispatchCallPush(env:Cloudflare.Env,callId:string){
+ if(!/^[a-f0-9-]{36}$/i.test(callId))return;
+ const started=Date.now();
+ for(let attempt=0;attempt<3&&Date.now()-started<20000;attempt++){
+  await dispatchPush(env,undefined,callId);
+  const pending=await env.DB.prepare("SELECT min(next_attempt) due FROM push_deliveries WHERE kind='call' AND source=? AND done=0 AND attempts<6 AND created>unixepoch()-60").bind('rtc:'+callId).first<{due:number|null}>();
+  if(pending?.due==null||attempt===2)return;
+  const delay=Math.max(0,pending.due*1000-Date.now());
+  // Another sender may own the lease. Never bypass its lease or send twice.
+  if(delay>3000)return;
+  await new Promise(resolve=>setTimeout(resolve,delay+50));
+ }
 }
