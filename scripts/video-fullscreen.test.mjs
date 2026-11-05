@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const code=ts.transpileModule(readFileSync('app/video-fullscreen.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const {expandVideo}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+globalThis.window=new EventTarget();globalThis.document={body:{style:{overflow:'auto'}}};let state={econectRoute:{page:'Home'}},previous,backCount=0;
+globalThis.history={get state(){return state},pushState(next){previous=state;state=next},back(){backCount++;state=previous;window.dispatchEvent(new Event('popstate'))}};
+let plays=0,closes=0,popover=false;const classes=new Set(),attrs=new Map();const container={classList:{add:c=>classes.add(c),remove:c=>classes.delete(c)},setAttribute:(k,v)=>attrs.set(k,v),removeAttribute:k=>attrs.delete(k),showPopover:()=>{popover=true},hidePopover:()=>{popover=false}};
+const video={src:'original-stream',currentTime:42,muted:false,volume:.8,play(){plays++;return Promise.resolve()}};
+let active=expandVideo(container,video,()=>closes++);assert.equal(plays,1);assert.equal(video.src,'original-stream');assert.equal(video.currentTime,42);assert.equal(video.muted,false);assert.equal(video.volume,.8);assert.equal(popover,true);assert.ok(classes.has('expanded-video'));assert.equal(document.body.style.overflow,'hidden');assert.equal(state.econectRoute.page,'Home');active.close();assert.equal(closes,1);assert.equal(backCount,1);assert.equal(document.body.style.overflow,'auto');assert.equal(popover,false);assert.equal(attrs.has('popover'),false);assert.equal(classes.size,0);active.dispose();assert.equal(closes,1);
+active=expandVideo(container,video,()=>closes++);const esc=new Event('keydown',{cancelable:true});esc.key='Escape';window.dispatchEvent(esc);assert.equal(closes,2);assert.ok(esc.defaultPrevented);assert.equal(backCount,2);
+active=expandVideo({...container,showPopover:undefined,hidePopover:undefined},video,()=>closes++);assert.ok(classes.has('expanded-video'));active.dispose();assert.equal(closes,3);assert.equal(document.body.style.overflow,'auto');
+console.log('PASS: immediate fullscreen reuses the existing video, retains source/time/sound, supports device Back/Escape, restores scrolling and works without popover support.');

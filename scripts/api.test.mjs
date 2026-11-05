@@ -169,6 +169,9 @@ assert.equal((await request('like',{post:yt.id},'actorone')).status,200);assert.
 
 assert.equal((await request('post',{body:'Photo points post',media:[{type:'image',url:'/api/media?key=public%2Fphoto'}]},'actorone')).status,200);const photoPost=sqlite.prepare("SELECT id FROM posts WHERE body='Photo points post'").get().id;
 assert.equal((await request('like',{post:photoPost,id:crypto.randomUUID()},'actortwo')).status,200);assert.equal((await request('comment',{post:photoPost,body:'Photo comment'},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actorone'").get().balance,60);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,40);assert.equal(combined(),100);
+
+assert.equal((await request('post',{body:'Stream video points',media:[{type:'video',url:'/api/media?key=public%2Flegacy-video'}]},'actorone')).status,200);const streamPost=sqlite.prepare("SELECT id FROM posts WHERE body='Stream video points'").get().id;assert.equal((await request('like',{post:streamPost},'actortwo')).status,200);assert.equal((await request('comment',{post:streamPost,body:'Stream video comment'},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actorone'").get().balance,80);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,20);assert.equal(combined(),100);
+console.log('PASS: restored uploaded-video posts retain 10-point likes and comments.');
 console.log('PASS: photo post likes and comments transfer exactly 10 points each with no extra points.');
 console.log('PASS: YouTube feed/profile posts, canonical thumbnails, URL rejection, repeat likes, retry protection, exact 10-point likes/comments/replies, insufficient-funds rollback and no self-credit.');
 
