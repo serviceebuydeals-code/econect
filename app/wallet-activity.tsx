@@ -1,0 +1,9 @@
+import {useEffect,useState} from 'react';
+import {ArrowDownLeft,ArrowUpRight,ChevronLeft} from 'lucide-react';
+export function WalletEntries({rows}:{rows:any[]}){return <>{rows.map(l=><div className="transaction" key={l.id}><span className="transaction-icon">{l.points>0?<ArrowDownLeft size={18}/>:<ArrowUpRight size={18}/>}</span><div><strong>{l.label}</strong>{l.gift_sender_username&&<small>From @{l.gift_sender_username}</small>}<span className={'ledger-bucket '+(l.bucket==='bonus'?'bonus':'')}>{l.bucket==='bonus'?'Bonus':'Withdrawable'}</span><small>{new Date(l.created+'Z').toLocaleString()}</small></div><b className={l.points>0?'teal-text':''}>{l.points>0?'+':''}{l.points} pts</b></div>)}</>}
+export function WalletActivity({back}:{back:()=>void}){
+ const [rows,setRows]=useState<any[]>([]),[next,setNext]=useState<number|null>(0),[busy,setBusy]=useState(false),[error,setError]=useState(''),[total,setTotal]=useState(0);
+ async function more(offset:number){setBusy(true);setError('');try{const r=await fetch('/api/wallet-activity?offset='+offset),d:any=await r.json();if(!r.ok)throw Error(d.error||'Unable to load wallet activity.');setRows(old=>offset===0?d.rows:[...old,...d.rows.filter((n:any)=>!old.some(v=>v.id===n.id))]);setNext(d.next);setTotal(d.total)}catch(e:any){setError(e.message)}finally{setBusy(false)}}
+ useEffect(()=>{void more(0)},[]);
+ return <><button className="secondary" onClick={back}><ChevronLeft size={18}/> Back to wallet</button><section className="card admin-card" style={{marginTop:16}}><h2>All wallet activity</h2><p>{total} activities · newest first</p><WalletEntries rows={rows}/>{!busy&&!error&&!rows.length&&<p>No wallet activity yet.</p>}{error&&<p role="alert">{error}</p>}{next!==null&&<button className="secondary" disabled={busy} onClick={()=>more(next)}>{busy?'Loading…':error?'Try again':'Load more activity'}</button>}</section></>;
+}

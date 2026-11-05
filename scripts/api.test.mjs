@@ -196,4 +196,40 @@ const topup=await request('payment',{coins:1,kind:'topup',recipient:'gift-receiv
 assert.equal((await request('wallet',undefined,'gift-receiver')).data.ledger.find(l=>l.id===topup.data.id).gift_sender_username,null);
 console.log('PASS: received wallet gifts expose sender usernames in both balance buckets and notifications, remain private to the recipient, conserve points, follow username changes, attribute confirmed bank gifts and exclude top-ups.');
 
+
+// One visible thread per person, preserved history and recipient read receipts.
+for(const [user,username] of [['thread-a','thread_a'],['thread-b','thread_b'],['wallet-history','wallet_history']])assert.equal((await request('signup',{...form,name:user,username},user)).status,200);
+const thread=(await request('chat',{recipient:'thread-b'},'thread-a')).data.id;
+await request('message',{conversation:thread,kind:'text',body:'first read receipt'},'thread-a');
+let outgoing=(await request('messages?id='+thread,undefined,'thread-a')).data;
+assert.equal(outgoing.messages.at(-1).seen,0);await request('messages-read',{conversation:thread,through:outgoing.readThrough},'thread-a');
+assert.equal((await request('messages?id='+thread,undefined,'thread-a')).data.messages.at(-1).seen,0,'reading your own messages is not recipient Seen');
+await request('messages-read',{conversation:thread,through:outgoing.readThrough},'thread-b');
+assert.equal((await request('messages?id='+thread,undefined,'thread-a')).data.messages.at(-1).seen,1);
+sqlite.prepare("INSERT INTO conversations(id,starter,recipient,status,created) VALUES('legacy-thread','thread-b','thread-a','active','2000-01-01 00:00:00')").run();
+sqlite.prepare("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('legacy-message','legacy-thread','thread-a','text','History from the old thread')").run();
+sqlite.prepare("UPDATE conversations SET status='ended' WHERE id='legacy-thread'").run();
+await request('message',{conversation:thread,kind:'text',body:'New unread message'},'thread-a');
+let list=(await request('chats',undefined,'thread-b')).data.filter(c=>c.starter==='thread-a'||c.recipient==='thread-a');
+assert.equal(list.length,1);assert.equal(list[0].id,thread);assert.equal(list[0].unread_count,2);
+outgoing=(await request('messages?id=legacy-thread',undefined,'thread-a')).data;
+assert.equal(outgoing.conversation.id,thread);assert.equal(outgoing.messages.length,3);assert.equal(outgoing.messages.find(m=>m.id==='legacy-message').seen,0);
+await request('messages-read',{conversation:thread,through:outgoing.readThrough},'thread-b');
+assert.ok((await request('messages?id='+thread,undefined,'thread-a')).data.messages.every(m=>m.seen===1));
+assert.equal((await request('messages?id='+thread,undefined,'carol')).status,404);
+assert.equal((await request('messages-read',{conversation:thread,through:outgoing.readThrough},'carol')).status,404);
+await request('end-chat',{conversation:thread},'thread-a');
+const resumed=await Promise.all([request('chat',{recipient:'thread-b'},'thread-a'),request('chat',{recipient:'thread-a'},'thread-b')]);
+assert.ok(resumed.every(r=>r.data.id===thread));assert.equal(sqlite.prepare("SELECT count(*) n FROM conversations WHERE starter IN('thread-a','thread-b') AND recipient IN('thread-a','thread-b')").get().n,2,'no new thread after ending/restarting or racing starts');
+sqlite.prepare("UPDATE conversations SET status='active' WHERE id='legacy-thread'").run();
+await request('end-chat',{conversation:thread},'thread-a');
+assert.equal(sqlite.prepare("SELECT count(*) n FROM conversations WHERE starter IN('thread-a','thread-b') AND recipient IN('thread-a','thread-b') AND status='active'").get().n,0);
+for(let i=0;i<125;i++)sqlite.prepare('INSERT INTO ledger(id,user,points,label) VALUES(?,?,?,?)').run('wallet-history-'+i,'wallet-history',1,'History '+i);
+const summary=(await request('wallet',undefined,'wallet-history')).data;
+assert.equal(summary.ledger.length,10);assert.equal(summary.ledger[0].id,'wallet-history-124');
+let offset=0,allRows=[];do{const response=await request('wallet-activity?offset='+offset,undefined,'wallet-history');assert.equal(response.status,200);allRows.push(...response.data.rows);offset=response.data.next}while(offset!==null);
+assert.equal(allRows.length,126);assert.equal(new Set(allRows.map(l=>l.id)).size,126);assert.ok(allRows.every(l=>l.user==='wallet-history'));
+assert.equal((await request('wallet-activity',undefined,null)).status,401);
+console.log('PASS: ended/active legacy threads combine without data loss, per-thread read receipts remain accurate, outsiders are blocked, restart/race creates no duplicates, ending closes the whole pair, wallet shows newest 10 and private history paginates beyond 100.');
+
 sqlite.close();delete globalThis.__econectTest;

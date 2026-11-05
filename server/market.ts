@@ -53,10 +53,11 @@ export async function marketRoute(r:Request):Promise<Response>{try{
  if(path==='buy'){
   const p=await one('SELECT * FROM market_products WHERE id=? AND active=1',b.product);if(!p||p.seller===uid)error('Choose another member’s product.');
   const snapshot=JSON.stringify({id:p.id,name:p.name,price:p.price,location:p.location,image:JSON.parse(p.images||'[]')[0]||''}),conversation=uuid();
-  const conversationQuery="SELECT id FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) AND status IN('active','inquiry') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,created DESC LIMIT 1";
+  const conversationQuery="SELECT id FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'inquiry' THEN 1 ELSE 2 END,created DESC,rowid DESC LIMIT 1";
   await db.batch([
    q('INSERT OR IGNORE INTO market_requests(id,product,buyer,seller) VALUES(?,?,?,?)',uuid(),p.id,uid,p.seller),
-   q("INSERT INTO conversations(id,starter,recipient,status) SELECT ?,?,?,'inquiry' WHERE NOT EXISTS(SELECT 1 FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) AND status IN('active','inquiry'))",conversation,uid,p.seller,uid,p.seller,p.seller,uid),
+   q("UPDATE conversations SET status='inquiry' WHERE id=("+conversationQuery+") AND status='ended'",uid,p.seller,p.seller,uid),
+   q("INSERT INTO conversations(id,starter,recipient,status) SELECT ?,?,?,'inquiry' WHERE NOT EXISTS(SELECT 1 FROM conversations WHERE ((starter=? AND recipient=?) OR (starter=? AND recipient=?)) )",conversation,uid,p.seller,uid,p.seller,p.seller,uid),
    q("INSERT OR IGNORE INTO messages(id,conversation,sender,kind,body) SELECT 'product-'||r.id||'-'||c.id,c.id,?,'product',? FROM market_requests r JOIN conversations c ON c.id=("+conversationQuery+") WHERE r.product=? AND r.buyer=?",uid,snapshot,uid,p.seller,p.seller,uid,p.id,uid)
   ]);
   const c=await one(conversationQuery,uid,p.seller,p.seller,uid);return Response.json({seller:p.seller,conversation:c.id,ok:true});
