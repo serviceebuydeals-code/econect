@@ -175,4 +175,25 @@ console.log('PASS: restored uploaded-video posts retain 10-point likes and comme
 console.log('PASS: photo post likes and comments transfer exactly 10 points each with no extra points.');
 console.log('PASS: YouTube feed/profile posts, canonical thumbnails, URL rejection, repeat likes, retry protection, exact 10-point likes/comments/replies, insufficient-funds rollback and no self-credit.');
 
+
+// Gift attribution is recipient-scoped and does not change settlement.
+for(const [user,username] of [['gift-giver','gift_giver'],['gift-receiver','gift_receiver']])assert.equal((await request('signup',{...form,name:user,username},user)).status,200);
+sqlite.prepare("UPDATE profiles SET balance=75,bonus=25 WHERE id='gift-giver'").run();
+const giftTotal=sqlite.prepare('SELECT sum(balance+bonus) n FROM profiles').get().n;
+assert.equal((await request('gift',{coins:1,kind:'gift',recipient:'gift-receiver'},'gift-giver')).status,200);
+assert.equal(sqlite.prepare('SELECT sum(balance+bonus) n FROM profiles').get().n,giftTotal);
+let receipt=(await request('wallet',undefined,'gift-receiver')).data.ledger.filter(l=>l.label.startsWith('eCoin gift'));
+assert.equal(receipt.length,2);assert.ok(receipt.every(l=>l.gift_sender_username==='gift_giver'));assert.equal(receipt.reduce((n,l)=>n+l.points,0),100);
+let notices=(await request('activity-notifications',undefined,'gift-receiver')).data.filter(n=>n.gift_sender_username);
+assert.equal(notices.length,2);assert.ok(notices.every(n=>n.gift_sender_username==='gift_giver'));
+assert.equal((await request('wallet',undefined,'gift-giver')).data.ledger.filter(l=>l.gift_sender_username).length,0);
+sqlite.prepare("UPDATE profiles SET username='gift_giver_new' WHERE id='gift-giver'").run();
+assert.ok((await request('wallet',undefined,'gift-receiver')).data.ledger.filter(l=>l.label.startsWith('eCoin gift')).every(l=>l.gift_sender_username==='gift_giver_new'));
+const bankGift=await request('payment',{coins:2,kind:'gift',recipient:'gift-receiver'},'gift-giver');assert.equal(bankGift.status,200);
+assert.equal((await request('admin/payment',{id:bankGift.data.id},'admin')).status,200);
+receipt=(await request('wallet',undefined,'gift-receiver')).data.ledger.find(l=>l.id===bankGift.data.id);assert.equal(receipt.gift_sender_username,'gift_giver_new');
+const topup=await request('payment',{coins:1,kind:'topup',recipient:'gift-receiver'},'gift-receiver');assert.equal(topup.status,200);await request('admin/payment',{id:topup.data.id},'admin');
+assert.equal((await request('wallet',undefined,'gift-receiver')).data.ledger.find(l=>l.id===topup.data.id).gift_sender_username,null);
+console.log('PASS: received wallet gifts expose sender usernames in both balance buckets and notifications, remain private to the recipient, conserve points, follow username changes, attribute confirmed bank gifts and exclude top-ups.');
+
 sqlite.close();delete globalThis.__econectTest;

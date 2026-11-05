@@ -50,7 +50,7 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
  for(let i=0;i<rows.length;i+=4)await Promise.all(rows.slice(i,i+4).map(async row=>{
   try{
    const finish=(state='skipped',status=0)=>db.prepare('UPDATE push_deliveries SET done=1,delivery_state=?,provider_status=? WHERE id=?').bind(state,status,row.id).run();
-   const s=await db.prepare('SELECT * FROM push_subscriptions WHERE id=? AND user=?').bind(row.subscription,row.user).first<any>();
+   let giftSender='';const s=await db.prepare('SELECT * FROM push_subscriptions WHERE id=? AND user=?').bind(row.subscription,row.user).first<any>();
    if(!s||now-row.created>(row.kind==='call'?60:86400)){await finish();return}
    if(row.conversation){
     const m=await db.prepare('SELECT m.rowid n,m.kind FROM messages m WHERE m.id=? AND m.conversation=?').bind(row.source,row.conversation).first<any>();
@@ -59,9 +59,9 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
     const ended=row.kind==='call'?await db.prepare("SELECT id FROM messages WHERE conversation=? AND rowid>? AND kind IN('answer','hangup','call-end') LIMIT 1").bind(row.conversation,m.n).first():null;
     if(ended||(read&&read.last_row>=m.n&&row.kind!=='call')){await finish();return}
    }
-   if(row.kind==='activity'){const a=await db.prepare('SELECT read_at FROM activity_notifications WHERE id=? AND user=?').bind(row.source,row.user).first<any>();if(!a||a.read_at){await finish();return}}
+   if(row.kind==='activity'){const a=await db.prepare('SELECT n.read_at,(SELECT p.username FROM gift_ledger_senders g JOIN profiles p ON p.id=g.sender_id WHERE g.ledger_id=n.ledger_id LIMIT 1) gift_sender_username FROM activity_notifications n WHERE n.id=? AND n.user=?').bind(row.source,row.user).first<any>();if(!a||a.read_at){await finish();return}giftSender=a.gift_sender_username||''}
    // Keep personal message content off the lock screen.
-   const body=row.kind==='call'?'You have an incoming call.':row.kind==='message'?'You have a new message.':row.kind==='test'?'Background notifications are enabled.':'You have new activity.';
+   const body=row.kind==='call'?'You have an incoming call.':row.kind==='message'?'You have a new message.':row.kind==='test'?'Background notifications are enabled.':giftSender?'You received an eCoin gift from @'+giftSender+'.':'You have new activity.';
    const payload={title:'eConect',body,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
    const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:row.kind==='call'?'high':'normal'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
