@@ -12,8 +12,9 @@ export function createCallController({request,media,change,error,open}:{request:
  function scheduleIce(){clearTimeout(iceTimer);if(ready&&outbound.length)iceTimer=setTimeout(()=>void flushIce(),60)}
  async function flushIce(){if(!current||!ready||flushing||!outbound.length)return;const id=current.id,epoch=generation,batch=outbound.splice(0,25);flushing=true;try{await request('ice',{id,candidates:batch});failures=0}catch{if(epoch===generation){outbound.unshift(...batch);if(++failures>=3){failed('Call connection details could not be sent. Please try again.');return}}}finally{if(epoch===generation){flushing=false;if(outbound.length)iceTimer=setTimeout(()=>void flushIce(),failures?500:60)}}}
  async function poll(){if(!current||!ready||disposed)return;const id=current.id,epoch=generation;try{
-  const data=await request('poll?id='+encodeURIComponent(id)+'&after='+after);if(epoch!==generation)return;pollFailures=0;
-  if(data.status==='ended'){const wasRinging=current.status==='Ringing…';dismissed.add(id);clean();if(wasRinging)error('The call was declined or was not answered.');return}
+  if(connection?.peer.connectionState==='connected'&&!current.connectionReported){try{await request('connected',{id});if(epoch!==generation)return;current.connectionReported=true}catch{}}
+  const data=await request('poll?id='+encodeURIComponent(id)+'&after='+after);if(epoch!==generation)return;pollFailures=0;Object.assign(current,{connectedAt:data.connectedAt,meterUntil:data.meterUntil,serverNow:data.serverNow,receivedAt:Date.now(),seconds:data.seconds||0,points:data.points||0,caller:data.caller});emit();
+  if(data.status==='ended'){const wasRinging=current.status==='Ringing…';dismissed.add(id);clean();if(data.endReason==='insufficient')error('The call ended because the caller has insufficient eCoin.');else if(wasRinging)error('The call was declined or was not answered.');return}
   for(const event of data.events||[]){if(epoch!==generation)return;const value=JSON.parse(event.body);
    if(event.kind==='answer'&&connection&&!connection.peer.remoteDescription){await connection.description(value);if(connection.peer.connectionState==='connected'){current.status='Connected';clearTimeout(deadline)}else{current.status='Connecting…';timeout(30000,'The call could not connect on this network. Please try again.')}emit()}
    if(event.kind==='ice'&&connection)await connection.candidate(value);
@@ -29,7 +30,7 @@ export function createCallController({request,media,change,error,open}:{request:
   const created=createCallPeer(config.iceServers,c=>{if(epoch===generation){outbound.push(c);scheduleIce()}},s=>{if(epoch===generation){remote=s;emit()}},state=>{
    if(epoch!==generation||!current)return;
    if(state==='connected'){clearTimeout(deadline);current.status='Connected';emit()}
-   if(state==='disconnected'){current.status='Reconnecting…';emit();timeout(20000,'The call connection was lost. Please try again.')}
+   if(state==='disconnected'){failed('The call connection was lost. The call has ended to stop further charges.')}
    if(state==='failed')failed(current.relay?'This network could not connect the call. Try Wi-Fi or mobile data.':'This network could not connect the call. A connection relay must be configured for some mobile networks.');
   });
   connection=created;stream.getTracks().forEach(t=>created.peer.addTrack(t,stream));return created;

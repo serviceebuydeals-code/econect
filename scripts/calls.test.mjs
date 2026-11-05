@@ -28,7 +28,10 @@ const db={prepare(sql){let values=[];return{bind(...v){values=v;return this},asy
 for(const user of ['alice','bob','carol'])sqlite.prepare('INSERT INTO profiles(id,username,name,surname,age,country,state,city,origin_country,origin_state) VALUES(?,?,?,?,?,?,?,?,?,?)').run(user,user,user,'Test',25,'NG','Lagos','Lagos','NG','Lagos');
 sqlite.exec("INSERT INTO conversations(id,starter,recipient) VALUES('conversation','alice','bob'),('other','alice','carol'); INSERT INTO push_subscriptions(id,user,endpoint,p256dh,auth,created) VALUES('device','bob','https://fcm.googleapis.com/test','public','auth',0)");
 let identity=null;globalThis.__callsAuth=async()=>identity;
-const route=await load(readFileSync('server/calls.ts','utf8').replace("import {getUser} from './auth';","const getUser=globalThis.__callsAuth;"));
+globalThis.__callMeter=await load(readFileSync('server/call-meter.ts','utf8'));
+const realNow=Date.now;let clock=realNow();Date.now=()=>clock;
+sqlite.exec("UPDATE profiles SET balance=1000,bonus=0");
+const route=await load(readFileSync('server/calls.ts','utf8').replace("import {meterCall} from './call-meter';",'const {meterCall}=globalThis.__callMeter;').replace("import {getUser} from './auth';","const getUser=globalThis.__callsAuth;"));
 const env={DB:db};async function request(path,body,user='alice',origin='https://econect.test'){identity=user?{userId:user}:null;const response=await route.callsRoute(new Request('https://econect.test/api/calls/'+path,body?{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)}:{}),env);return{status:response.status,data:await response.json()}}
 assert.equal((await request('config',null,null)).status,401);assert.equal((await request('config')).data.relay,false);
 const id=crypto.randomUUID(),offer={type:'offer',sdp:'session-offer'};
@@ -45,7 +48,55 @@ response=await request('poll?id='+id);assert.deepEqual(response.data.events.map(
 assert.equal((await request('start',{id:crypto.randomUUID(),conversation:'other',offer})).status,409);
 assert.equal((await request('hangup',{id},'carol')).status,404);assert.equal((await request('hangup',{id},'bob')).status,200);assert.equal((await request('hangup',{id},'bob')).status,200);assert.equal((await request('poll?id='+id)).data.status,'ended');assert.equal((await request('incoming',null,'bob')).data.length,0);
 const second=crypto.randomUUID();assert.equal((await request('start',{id:second,conversation:'conversation',offer})).status,200);sqlite.prepare('UPDATE rtc_calls SET expires=? WHERE id=?').run(Date.now()-1,second);assert.equal((await request('poll?id='+second)).data.status,'ended');assert.equal((await request('answer',{id:second,answer:{type:'answer',sdp:'answer'}},'bob')).status,410);
-assert.equal(sqlite.prepare('SELECT count(*) n FROM ledger').get().n,0,'calls remain free');
+assert.equal(sqlite.prepare('SELECT count(*) n FROM ledger').get().n,0,'unanswered and unconnected calls are never charged');
+assert.ok(sqlite.prepare("SELECT label FROM activity_notifications WHERE user='bob' AND label LIKE 'Missed %'").get(),'missed calls notify the recipient');
+for(const video of [false,true]){
+ sqlite.exec("UPDATE profiles SET balance=1000,bonus=50 WHERE id='alice';UPDATE profiles SET balance=0,bonus=0 WHERE id='bob'");
+ const paid=crypto.randomUUID(),base=clock;
+ assert.equal((await request('start',{id:paid,conversation:'conversation',offer,video})).status,200);
+ assert.equal((await request('answer',{id:paid,answer:{type:'answer',sdp:'answer'}},'bob')).status,200);
+ clock+=3000;await request('poll?id='+paid);assert.equal(sqlite.prepare('SELECT billed_seconds FROM rtc_calls WHERE id=?').get(paid).billed_seconds,0,'answering is not yet a media connection');
+ assert.equal((await request('connected',{id:paid})).status,200);assert.equal(sqlite.prepare('SELECT connected_at FROM rtc_calls WHERE id=?').get(paid).connected_at,null,'both peers must confirm connection');
+ assert.equal((await request('connected',{id:paid},'bob')).status,200);const connected=clock;
+ await request('connected',{id:paid},'bob');assert.equal(sqlite.prepare('SELECT connected_at FROM rtc_calls WHERE id=?').get(paid).connected_at,connected,'connection retries never reset the clock');
+ clock+=5800;await request('poll?id='+paid);let seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,100);assert.equal(seen.data.seconds,5);assert.equal(seen.data.connectedAt,connected);assert.equal(seen.data.caller,false);
+ const sum=()=>sqlite.prepare("SELECT sum(balance+bonus) n FROM profiles WHERE id IN('alice','bob')").get().n;
+ assert.equal(sum(),1050,'transfers conserve all points');
+ assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='bob'").get().bonus,50,'bonus earnings cannot become withdrawable');
+ clock+=6200;await request('poll?id='+paid);seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,240);
+ const transfers=sqlite.prepare('SELECT count(*) n FROM point_transfers').get().n;
+ await Promise.all([request('poll?id='+paid),request('poll?id='+paid,null,'bob')]);assert.equal(sqlite.prepare('SELECT count(*) n FROM point_transfers').get().n,transfers,'concurrent participant polls do not bill twice');
+ assert.equal((await request('hangup',{id:paid},'carol')).status,404);
+ clock+=700;await request('hangup',{id:paid});const total=sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n;
+ clock+=10000;await request('hangup',{id:paid},'bob');await request('poll?id='+paid);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,total,'hangup retries never charge again');assert.equal(sum(),1050);
+ assert.equal(sqlite.prepare('SELECT billed_seconds FROM rtc_calls WHERE id=?').get(paid).billed_seconds,12);
+ assert.equal((await request('history?conversation=conversation',null,'carol')).status,404);
+ const history=await request('history?conversation=conversation',null,'bob');assert.equal(history.data.find(c=>c.id===paid).billed_seconds,12);
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE '%earned 2.40 eCoin'").get().n,video?2:1,'one earning summary per finished call');
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Audio call · +%' OR label LIKE 'Video call · +%'").get().n,0,'meter ticks do not send a notification storm');
+}
+sqlite.exec("UPDATE profiles SET balance=50,bonus=50 WHERE id='alice'");
+const limited=crypto.randomUUID();await request('start',{id:limited,conversation:'conversation',offer});await request('answer',{id:limited,answer:{type:'answer',sdp:'answer'}},'bob');await request('connected',{id:limited});await request('connected',{id:limited},'bob');clock+=7000;
+let stopped=await request('poll?id='+limited);assert.equal(stopped.data.status,'ended');assert.equal(stopped.data.endReason,'insufficient');assert.equal(stopped.data.points,100);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,0);
+assert.equal((await request('start',{id:crypto.randomUUID(),conversation:'conversation',offer})).status,402,'a caller without 1 eCoin cannot start a call');
+sqlite.exec("UPDATE profiles SET balance=1000,bonus=0 WHERE id='alice'");
+const stale=crypto.randomUUID();await request('start',{id:stale,conversation:'conversation',offer});await request('answer',{id:stale,answer:{type:'answer',sdp:'answer'}},'bob');await request('connected',{id:stale});await request('connected',{id:stale},'bob');clock+=60000;await globalThis.__callMeter.expireCalls(env);
+assert.equal(sqlite.prepare('SELECT billed_seconds FROM rtc_calls WHERE id=?').get(stale).billed_seconds,5,'abrupt offline calls cannot keep billing indefinitely');
+assert.equal(sqlite.prepare('SELECT status FROM rtc_calls WHERE id=?').get(stale).status,'ended');
+// Database notifications cover every administrator, while excluding ordinary accounts.
+for(const id of ['admin1','admin2']){
+ sqlite.prepare("INSERT INTO profiles(id,username,name,surname,age,country,state,city,origin_country,origin_state) VALUES(?,?,?,'Admin',25,'NG','Lagos','Lagos','NG','Lagos')").run(id,id,id);
+ sqlite.prepare("INSERT INTO auth_users(id,email,password_hash,salt,is_admin) VALUES(?,?, 'test','test',1)").run(id,id+'@test.example');
+ sqlite.prepare("INSERT INTO push_subscriptions(id,user,endpoint,p256dh,auth,created) VALUES(?,?,?,'public','auth',0)").run(id+'device',id,'https://fcm.googleapis.com/'+id);
+}
+sqlite.prepare("INSERT INTO wallet_withdrawals(id,user,coin_units,price_kobo,gross_kobo,fee_kobo,net_kobo,bank_name,account_name,account_number) VALUES('admin-alert-w','alice',10000,150000,150000,15000,135000,'Bank','Alice','0123456789')").run();
+assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Admin: new wallet withdrawal%'").get().n,2);
+assert.equal(sqlite.prepare("SELECT count(*) n FROM push_deliveries WHERE user IN('admin1','admin2') AND kind='activity'").get().n,2,'withdrawal alerts are queued for admin devices');
+assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Admin:%' AND user='bob'").get().n,0);
+assert.throws(()=>sqlite.prepare("INSERT INTO wallet_withdrawals SELECT * FROM wallet_withdrawals WHERE id='admin-alert-w'").run());assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Admin: new wallet withdrawal%'").get().n,2,'withdrawal retries never duplicate admin alerts');
+sqlite.exec("INSERT INTO payments(id,buyer,recipient,coins,kind) VALUES('manual-alert','alice','alice',1,'wallet');UPDATE payments SET reference='bank-reference' WHERE id='manual-alert';UPDATE payments SET reference='bank-reference' WHERE id='manual-alert'");
+assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Admin: payment submitted%'").get().n,2);
+Date.now=realNow;
 let provider=0;globalThis.fetch=async(url,options)=>{provider++;assert.ok(url.endsWith('/credentials/generate-ice-servers'));assert.equal(options.headers.Authorization,'Bearer private-key');assert.equal(JSON.parse(options.body).ttl,86400);return Response.json({iceServers:[{urls:['turns:turn.cloudflare.com:443?transport=tcp'],username:'temporary',credential:'short-lived'}]})};
 env.TURN_KEY_ID='key-id';env.TURN_API_TOKEN='private-key';const config=await request('config');assert.equal(config.data.relay,true);assert.equal(provider,1);assert.equal(JSON.stringify(config.data).includes('private-key'),false);sqlite.close();
-console.log('PASS: early ICE survives Answer; streamless audio tracks play; call authorization, one-answer claims, busy checks, separate event cursors, caller push, expiry, hangup and ephemeral TURN credentials work; calls charge no points.');
+console.log('PASS: early ICE survives Answer; streamless audio tracks play; call authorization, one-answer claims, busy checks, separate event cursors, caller push, expiry, hangup and ephemeral TURN credentials work; connected call billing conserves points, retains bonus restrictions, stops at insufficient funds, survives retries, limits stale sessions, records missed calls and notifies every admin of withdrawals.');

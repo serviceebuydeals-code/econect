@@ -111,8 +111,8 @@ const actorChat=(await request('chat',{recipient:'actortwo'},'actorone')).data.i
 assert.equal((await request('message',{conversation:actorChat,kind:'voice',body:'/api/media?key=private%2Fv',duration:61},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 sqlite.prepare('INSERT INTO conversation_usage(conversation,user,texts) VALUES(?,?,999)').run(actorChat,'actortwo');
 assert.equal((await request('message',{conversation:actorChat,kind:'text',body:'Free text'},'actortwo')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
-assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,200);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,200);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
-assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
+assert.equal((await request('call-start',{conversation:actorChat},'actortwo')).status,426);assert.equal((await request('call-end',{conversation:actorChat},'actorone')).status,426);assert.equal(combined(),200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
+assert.equal((await request('call-end',{conversation:actorChat},'actortwo')).status,426);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,88);
 assert.equal((await request('chats',undefined,'actorone')).status,200);assert.equal((await request('unread',undefined,'actorone')).data.messages,2);
 const snapshot=(await request('messages?id='+actorChat,undefined,'actorone')).data;
 assert.equal((await request('unread',undefined,'actorone')).data.messages,2); // fetching alone does not clear unread

@@ -58,7 +58,7 @@ const callId=crypto.randomUUID();sqlite.prepare('INSERT INTO rtc_calls(id,conver
 await push.dispatchPush(env);assert.equal(capturedPayload.kind,'call');assert.equal(capturedPayload.callId,callId);assert.equal(capturedPayload.title,'Incoming video call');assert.match(capturedPayload.body,/alice/);assert.match(capturedPayload.url,/call=/);
 const beforeEnded=sends;sqlite.prepare("UPDATE rtc_calls SET status='ended' WHERE id=?").run(callId);
 sqlite.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,conversation) SELECT id,user,'call',?,'chat' FROM push_subscriptions WHERE user='bob'").run('rtc:'+callId);
-await push.dispatchPush(env);assert.equal(sends,beforeEnded,'ended calls must not send stale ringing notifications');
+await push.dispatchPush(env);assert.equal(sends,beforeEnded+1,'ended calls send one missed-call activity alert instead of stale ringing');assert.equal(capturedPayload.title,'Missed call');assert.match(capturedPayload.body,/alice/);
 
 user=null;assert.equal((await req('subscribe',sub)).status,401);
 const listeners={},shown=[],opened=[];const scope={location:{origin:'https://econectapp.com'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
