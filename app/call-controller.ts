@@ -6,7 +6,7 @@ export function createCallController({request,media,change,error,open}:{request:
  let pollTimer:ReturnType<typeof setTimeout>|undefined,iceTimer:ReturnType<typeof setTimeout>|undefined,deadline:ReturnType<typeof setTimeout>|undefined;const outbound:RTCIceCandidateInit[]=[],dismissed=new Set<string>();
  const emit=()=>change({current:current?{...current}:null,incoming,local,remote});
  function clean(){generation++;clearTimeout(pollTimer);clearTimeout(iceTimer);clearTimeout(deadline);connection?.close();connection=null;local?.getTracks().forEach(t=>t.stop());remote?.getTracks().forEach(t=>t.stop());local=null;remote=null;current=null;ready=false;outbound.length=0;after=0;flushing=false;failures=0;pollFailures=0;emit()}
- async function hangup(){const id=current?.id||incoming?.id;if(id)dismissed.add(id);incoming=null;clean();if(id)await request('hangup',{id}).catch(()=>{})}
+ async function hangup(){const decline=!current&&!!incoming,id=current?.id||incoming?.id;if(id)dismissed.add(id);incoming=null;clean();if(id)await request('hangup',{id,decline}).catch(()=>{})}
  function failed(message:string){void hangup();error(message)}
  function timeout(ms:number,message:string){clearTimeout(deadline);deadline=setTimeout(()=>failed(message),ms)}
  function scheduleIce(){clearTimeout(iceTimer);if(ready&&outbound.length)iceTimer=setTimeout(()=>void flushIce(),60)}

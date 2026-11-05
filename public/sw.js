@@ -16,7 +16,7 @@ self.addEventListener('push',event=>{
 self.addEventListener('notificationclick',event=>{
  event.notification.close();
  event.waitUntil((async()=>{
-  if(event.action==='decline-call'&&/^[a-f0-9-]{36}$/i.test(event.notification.data?.callId||'')){try{const r=await fetch('/api/calls/hangup',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:event.notification.data.callId})});if(r.ok)return}catch{}}
+  if(event.action==='decline-call'&&/^[a-f0-9-]{36}$/i.test(event.notification.data?.callId||'')){try{const r=await fetch('/api/calls/hangup',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:event.notification.data.callId,decline:true})});if(r.ok)return}catch{}}
   const url=new URL(event.notification.data?.url||'/',self.location.origin);if(url.origin!==self.location.origin)return;
   const tabs=await self.clients.matchAll({type:'window',includeUncontrolled:true});
   for(const tab of tabs){if(new URL(tab.url).origin===url.origin){await tab.navigate(url.href);await tab.focus();return}}

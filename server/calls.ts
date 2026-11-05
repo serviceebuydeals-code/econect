@@ -40,7 +40,7 @@ export async function callsRoute(r:Request,env:Cloudflare.Env):Promise<Response>
   return Response.json({id:b.id});
  }
  const c=await readCall(b.id);
- if(path==='hangup'){await q("UPDATE rtc_calls SET status='ended',ended=? WHERE id=? AND status!='ended'",now,c.id).run();return Response.json({ok:true})}
+ if(path==='hangup'){if(b.decline&&c.status!=='ringing')return Response.json({ok:true});await q("UPDATE rtc_calls SET status='ended',ended=? WHERE id=? AND status!='ended'",now,c.id).run();return Response.json({ok:true})}
  if(c.status==='ended')fail('This call has ended.',410);
  if(path==='answer'){
   if(c.recipient!==uid)fail('Only the recipient can answer.',403);if(b.answer?.type!=='answer'||typeof b.answer.sdp!=='string'||b.answer.sdp.length>50000)fail('Invalid call answer.');

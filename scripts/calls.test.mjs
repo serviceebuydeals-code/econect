@@ -40,7 +40,7 @@ assert.equal((await request('poll?id='+id,null,'carol')).status,404);assert.equa
 let response=await request('poll?id='+id,null,'bob');assert.deepEqual(response.data.events.map(e=>e.kind),['offer','ice']);const last=response.data.events.at(-1).id;
 assert.equal((await request('answer',{id,answer:{type:'answer',sdp:'answer'}},'alice')).status,403);
 assert.equal((await request('answer',{id,answer:{type:'answer',sdp:'answer'}},'bob')).status,200);assert.equal((await request('answer',{id,answer:{type:'answer',sdp:'answer'}},'bob')).status,409);
-assert.equal(sqlite.prepare("SELECT count(*) n FROM rtc_signals WHERE kind='answer'").get().n,1);
+assert.equal(sqlite.prepare("SELECT count(*) n FROM rtc_signals WHERE kind='answer'").get().n,1);assert.equal((await request('hangup',{id,decline:true},'bob')).status,200);assert.equal(sqlite.prepare('SELECT status FROM rtc_calls WHERE id=?').get(id).status,'active','a stale notification cannot decline a call answered on another device');
 response=await request('poll?id='+id);assert.deepEqual(response.data.events.map(e=>e.kind),['answer']);assert.equal((await request('poll?id='+id+'&after='+last,null,'bob')).data.events.length,0);
 assert.equal((await request('start',{id:crypto.randomUUID(),conversation:'other',offer})).status,409);
 assert.equal((await request('hangup',{id},'carol')).status,404);assert.equal((await request('hangup',{id},'bob')).status,200);assert.equal((await request('hangup',{id},'bob')).status,200);assert.equal((await request('poll?id='+id)).data.status,'ended');assert.equal((await request('incoming',null,'bob')).data.length,0);
