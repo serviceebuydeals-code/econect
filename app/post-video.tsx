@@ -1,6 +1,8 @@
+import {youtubeVideo} from '../shared/youtube';
+import {YouTubeVideo} from './youtube-video';
 import {useEffect,useRef,useState} from 'react';
 import {Play,Volume2,VolumeX,Maximize2,RotateCw} from 'lucide-react';
-export function PostVideo({src,poster,full=false,onOpen}:{src:string,poster?:string,full?:boolean,onOpen?:()=>void}){
+function UploadedPostVideo({src,poster,full=false,onOpen}:{src:string,poster?:string,full?:boolean,onOpen?:()=>void}){
  const video=useRef<HTMLVideoElement>(null),manual=useRef(false),visible=useRef(false),id=useRef(crypto.randomUUID());
  const [playing,setPlaying]=useState(false),[muted,setMuted]=useState(true),[time,setTime]=useState(0),[duration,setDuration]=useState(0),[wanted,setWanted]=useState(full),[error,setError]=useState(false),[retry,setRetry]=useState(0);
  const parsed=new URL(src,location.origin),stream=parsed.origin===location.origin&&parsed.pathname==='/api/media'&&(parsed.searchParams.get('key')||'').includes('/stream/');
@@ -38,3 +40,5 @@ export function PostVideo({src,poster,full=false,onOpen}:{src:string,poster?:str
   {full&&Number.isFinite(duration)&&duration>0&&<input className="post-video-seek" aria-label="Seek video" type="range" min={0} max={duration} step="0.1" value={time} onChange={e=>{if(video.current)video.current.currentTime=Number(e.target.value)}}/>}
  </div>;
 }
+
+export function PostVideo(props:{src:string,poster?:string,full?:boolean,onOpen?:()=>void}){return youtubeVideo(props.src)?<div className={props.full?'full-video':''}><YouTubeVideo url={props.src}/></div>:<UploadedPostVideo {...props}/>;}

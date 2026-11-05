@@ -7,7 +7,7 @@ const db={prepare(sql){let vals=[];return{bind(...v){vals=v;return this},async f
 let identity=null;globalThis.__econectTest={env:{DB:db},getAuth:async()=>identity};
 let code=readFileSync('server/api.ts','utf8').replace("import{env}from'cloudflare:workers';import{getUser}from'./auth';","const env=globalThis.__econectTest.env;const getUser=globalThis.__econectTest.getAuth;");
 code=code.replace("import{getCoinPrice,coinAmount}from'./pricing';",readFileSync('server/pricing.ts','utf8').replace(/export /g,''));
-code=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+code=code.replace("import {youtubeVideo} from '../shared/youtube';",readFileSync('shared/youtube.ts','utf8').replace(/export /g,''));code=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const route=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 async function request(path,body,user){identity=user?{userId:user,isAdmin:user==='admin',email:user==='admin'?'admin@example.test':user+'@test.invalid'}:null;const req=new Request('https://econect.test/api/'+path,body?{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://econect.test'},body:JSON.stringify(body)}:{});const r=await route[body?'POST':'GET'](req);return{status:r.status,data:await r.json()}}
 const form={surname:'Test',age:25,country:'Nigeria',state:'Lagos',city:'Lagos',originCountry:'Nigeria',originState:'Lagos'};
@@ -153,5 +153,23 @@ ranged=await mediaRange(null,'HEAD');assert.equal(ranged.status,200);assert.equa
 ranged=await mediaRange(null);assert.equal(ranged.status,200);assert.equal(ranged.headers.get('Accept-Ranges'),'bytes');assert.equal((await ranged.arrayBuffer()).byteLength,6);
 assert.equal((await mediaRange('bytes=0-1','GET','private/video')).status,401);
 console.log('PASS: video byte ranges, suffix/open ranges, seek bounds, HEAD, full video length and private media access checks.');
+
+
+// YouTube posts use the normal feed/profile and conserve points on all engagement.
+sqlite.prepare("UPDATE profiles SET balance=CASE WHEN id='actortwo' THEN 100 ELSE 0 END,bonus=0 WHERE id IN('actorone','actortwo','actorpoor')").run();
+assert.equal((await request('post',{body:'YouTube post',media:[{type:'video',url:'https://youtu.be/dQw4w9WgXcQ?si=test',poster:'https://evil.test/x'}]},'actorone')).status,200);
+const yt=sqlite.prepare("SELECT * FROM posts WHERE body='YouTube post'").get(),ytMedia=JSON.parse(yt.media)[0];assert.equal(ytMedia.provider,'youtube');assert.equal(ytMedia.url,'https://www.youtube.com/watch?v=dQw4w9WgXcQ');assert.equal(ytMedia.poster,'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+assert.ok((await request('bootstrap',undefined,'actortwo')).data.posts.some(p=>p.id===yt.id));assert.ok((await request('profile?id=actorone',undefined,'actortwo')).data.posts.some(p=>p.id===yt.id));
+for(const url of ['javascript:alert(1)','https://youtube.com.evil.test/watch?v=dQw4w9WgXcQ','https://youtube.com/watch?v=bad'])assert.equal((await request('post',{body:'Invalid',media:[{type:'video',provider:'youtube',url}]},'actorone')).status,400);
+const ytLike={post:yt.id,id:crypto.randomUUID()};assert.equal((await request('like',ytLike,'actortwo')).status,200);assert.equal((await request('like',ytLike,'actortwo')).data.already,true);assert.equal((await request('like',{post:yt.id,id:crypto.randomUUID()},'actortwo')).status,200);
+assert.equal((await request('comment',{post:yt.id,body:'YouTube comment'},'actortwo')).status,200);const ytComment=sqlite.prepare('SELECT id FROM comments WHERE post=?').get(yt.id);assert.equal((await request('comment',{post:yt.id,parent:ytComment.id,body:'YouTube reply'},'actortwo')).status,200);
+assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actorone'").get().balance,40);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,60);assert.equal(combined(),100);
+const count=sqlite.prepare('SELECT count(*) n FROM comments WHERE post=?').get(yt.id).n;assert.equal((await request('comment',{post:yt.id,body:'No funds'},'actorpoor')).status,400);assert.equal(sqlite.prepare('SELECT count(*) n FROM comments WHERE post=?').get(yt.id).n,count);assert.equal((await request('like',{post:yt.id},'actorpoor')).status,400);assert.equal(combined(),100);
+assert.equal((await request('like',{post:yt.id},'actorone')).status,200);assert.equal((await request('comment',{post:yt.id,body:'My video'},'actorone')).status,200);assert.equal(combined(),100);
+
+assert.equal((await request('post',{body:'Photo points post',media:[{type:'image',url:'/api/media?key=public%2Fphoto'}]},'actorone')).status,200);const photoPost=sqlite.prepare("SELECT id FROM posts WHERE body='Photo points post'").get().id;
+assert.equal((await request('like',{post:photoPost,id:crypto.randomUUID()},'actortwo')).status,200);assert.equal((await request('comment',{post:photoPost,body:'Photo comment'},'actortwo')).status,200);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actorone'").get().balance,60);assert.equal(sqlite.prepare("SELECT balance FROM profiles WHERE id='actortwo'").get().balance,40);assert.equal(combined(),100);
+console.log('PASS: photo post likes and comments transfer exactly 10 points each with no extra points.');
+console.log('PASS: YouTube feed/profile posts, canonical thumbnails, URL rejection, repeat likes, retry protection, exact 10-point likes/comments/replies, insufficient-funds rollback and no self-credit.');
 
 sqlite.close();delete globalThis.__econectTest;

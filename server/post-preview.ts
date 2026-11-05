@@ -1,3 +1,4 @@
+import {youtubeVideo} from '../shared/youtube';
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 // Only public eConect uploads may appear in unauthenticated link previews.
 function publicMedia(value:unknown,origin:string){if(typeof value!=='string')return '';try{const url=new URL(value,origin);return url.origin===origin&&url.pathname==='/api/media'&&url.searchParams.get('key')?.startsWith('public/')?url.href:''}catch{return ''}}
@@ -7,9 +8,10 @@ export async function postPreview(request:Request,env:Cloudflare.Env):Promise<Re
  const base=await env.ASSETS.fetch(new Request(url.origin+'/',request));
  const canonical=new URL('/',url.origin);canonical.searchParams.set('post',id);
  let media:any[]=[];try{const parsed=JSON.parse(post?.media||'[]');if(Array.isArray(parsed))media=parsed}catch{}
- const first=media.find(m=>m&&['image','video'].includes(m.type)&&publicMedia(m.url,url.origin));
- const video=first?.type==='video'?publicMedia(first.url,url.origin):'';
- const image=(first?.type==='image'?publicMedia(first.url,url.origin):publicMedia(first?.poster,url.origin))||media.filter(m=>m?.type==='image').map(m=>publicMedia(m.url,url.origin)).find(Boolean)||publicMedia(post?.avatar,url.origin)||'';
+ const first=media.find(m=>m&&['image','video'].includes(m.type)&&(publicMedia(m.url,url.origin)||(m.type==='video'&&youtubeVideo(m.url))));
+ const youtube=first?.type==='video'?youtubeVideo(first.url):null;
+ const video=first?.type==='video'&&!youtube?publicMedia(first.url,url.origin):'';
+ const image=youtube?.poster||(first?.type==='image'?publicMedia(first.url,url.origin):publicMedia(first?.poster,url.origin))||media.filter(m=>m?.type==='image').map(m=>publicMedia(m.url,url.origin)).find(Boolean)||publicMedia(post?.avatar,url.origin)||'';
  const author=post?([post.name,post.surname].filter(Boolean).join(' ')||'@'+post.username):'';
  const title=post?author+' on eConect':'Post unavailable · eConect';
  const description=post?(String(post.body||'').replace(/\s+/g,' ').trim().slice(0,240)||(video?'Watch this video on eConect.':image?'See this photo on eConect.':'View this post on eConect.')):'This post is no longer available.';

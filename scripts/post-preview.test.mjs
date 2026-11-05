@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-const code=ts.transpileModule(readFileSync('server/post-preview.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const code=ts.transpileModule(readFileSync('server/post-preview.ts','utf8').replace("import {youtubeVideo} from '../shared/youtube';",readFileSync('shared/youtube.ts','utf8').replace(/export /g,'')),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const {postPreview,sharedPost}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 let post,requestedId,headKey;
 const env={DB:{prepare(sql){assert.match(sql,/WHERE p.id=\?/);return{bind(id){requestedId=id;return{first:async()=>post}}}}},ASSETS:{fetch:async()=>new Response('<html><head><title>eConect</title><meta name="description" content="Generic"/></head><body><div id="root"></div></body></html>',{headers:{'Content-Type':'text/html','ETag':'old','Cache-Control':'public,max-age=3600'}})},BUCKET:{head:async key=>{headKey=key;return{httpMetadata:{contentType:'video/mp4'}}}}};
@@ -16,3 +16,5 @@ response=await postPreview(req('HEAD'),env);assert.equal(await response.text(),'
 console.log('PASS: public photo/video previews, poster and MIME metadata, escaping, canonical URLs, private-media exclusion, malformed/deleted posts, cache headers and HEAD.');
 
 post={id:'older-post',body:'Older public moment',media:'[]',likes:2,comments:1};response=await sharedPost(new Request('https://econectapp.com/api/shared-post?id=older-post'),env);assert.equal(response.status,200);assert.equal(requestedId,'older-post');assert.equal((await response.json()).id,'older-post');post=null;assert.equal((await sharedPost(new Request('https://econectapp.com/api/shared-post?id=deleted'),env)).status,404);console.log('PASS: exact shared-post lookup outside the latest feed and deleted-post response.');
+
+post={name:'Creator',username:'creator',body:'YouTube moment',media:JSON.stringify([{type:'video',provider:'youtube',url:'https://www.youtube.com/watch?v=dQw4w9WgXcQ'}])};const youtubePreview=await (await postPreview(req(),env)).text();assert.ok(youtubePreview.includes('https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'));console.log('PASS: YouTube post share previews use the video thumbnail.');
