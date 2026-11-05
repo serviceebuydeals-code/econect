@@ -1,5 +1,5 @@
 # Device push notifications
-Notifications → Enable notifications registers each device after a user gesture and OS permission. Test notification queues a test with a 15-second delay; the minute cron delivers it even after the app closes.
+Notifications → Enable notifications registers each device after a user gesture and OS permission. Test notification attempts delivery immediately and confirms provider acceptance. Provider errors and expired registrations are reported to the device owner; it does not claim device receipt. The minute cron handles retries and ordinary pending events.
 Supported delivery: Chrome-installed Android PWA and Safari Home Screen apps on iOS 16.4+. The Android WebView preview APK does not implement PushManager and needs Firebase/native integration and a rebuilt APK. This web update does not add native Firebase.
 Phone/browser notification settings, Focus/Do Not Disturb, connectivity and force-stopping the browser can prevent sound or delivery. No custom background ringtone or continuous native call screen is provided.
 
@@ -14,4 +14,4 @@ npm run check
 npm run build
 npm test
 npx wrangler deploy --dry-run
-After deployment, enable notifications from the installed PWA. Queue a test, close the app, and check the device within a minute. Send a message from another account, check the locked phone, and tap to verify conversation routing. Also check disabling notifications and logging out. Physical-device delivery and OS sound require this end-to-end test.
+After deployment, enable notifications from the installed PWA. Send a test and check the reported delivery result. Then close the app and send a message from a second account to verify background delivery. Send a message from another account, check the locked phone, and tap to verify conversation routing. Also check disabling notifications and logging out. Physical-device delivery and OS sound require this end-to-end test.

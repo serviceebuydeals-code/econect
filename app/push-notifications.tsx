@@ -8,7 +8,7 @@ export function PushNotifications({user}:{user:string}){
  useEffect(()=>{let active=true;if(supported)registration().then(r=>r.pushManager.getSubscription()).then(async sub=>{if(sub&&active){const d=await request('status',{endpoint:sub.endpoint});if(active)setEnabled(d.enabled&&Notification.permission==='granted')}}).catch(()=>{});return()=>{active=false}},[user,supported]);
  async function action(kind:string){setBusy(true);setStatus('');try{
   if(kind==='disable'){await disableDevicePush();setEnabled(false);setStatus('Notifications turned off on this device.')}
-  else if(kind==='test'){const sub=await(await registration()).pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await request('test',{endpoint:sub.endpoint});setStatus('Test queued. Close the app; the notification should arrive within a minute.')}
+  else if(kind==='test'){if(Notification.permission!=='granted')throw new Error('Notifications are blocked. Allow them in your phone or browser settings.');const sub=await(await registration()).pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await request('test',{endpoint:sub.endpoint});setStatus('Test sent to your device’s push service. If it does not appear, check your phone’s notification permission, notification sound settings and Do Not Disturb.')}
   else{
    // Permission must be requested directly from this user gesture, especially on iOS.
    if(await Notification.requestPermission()!=='granted')throw new Error('Allow notifications in your phone’s settings, then try again.');

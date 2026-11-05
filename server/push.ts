@@ -32,19 +32,24 @@ export async function pushRoute(r:Request,env:Cloudflare.Env){
  if(path==='test'){
   const s=await db.prepare('SELECT id FROM push_subscriptions WHERE user=? AND endpoint=?').bind(uid,endpoint).first<any>();if(!s)return Response.json({error:'Enable notifications first.'},{status:400});
   const recent=await db.prepare("SELECT id FROM push_deliveries WHERE subscription=? AND kind='test' AND created>unixepoch()-60").bind(s.id).first();if(recent)return Response.json({error:'Wait one minute before another test.'},{status:429});
-  await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,next_attempt) VALUES(?,?,'test','test',unixepoch()+15)").bind(s.id,uid).run();return Response.json({ok:true});
+  const delivery=await db.prepare("INSERT INTO push_deliveries(subscription,user,kind,source) VALUES(?,?,'test','test') RETURNING id").bind(s.id,uid).first<any>();
+  await dispatchPush(env,delivery.id);
+  const result=await db.prepare('SELECT delivery_state,provider_status FROM push_deliveries WHERE id=? AND user=?').bind(delivery.id,uid).first<any>();
+  if(result?.delivery_state==='accepted')return Response.json({ok:true,state:'accepted'});
+  const expired=result?.delivery_state==='expired',code=result?.provider_status||0;
+  return Response.json({error:expired?'This device registration expired. Turn notifications off, then enable them again.':code?'The push service rejected the test (HTTP '+code+'). Please report this code.':'The test could not be sent to the push service. Please try again.',code:expired?'PUSH_EXPIRED':'PUSH_DELIVERY_FAILED'},{status:502});
  }
  return new Response('Not found',{status:404});
 }
-export async function dispatchPush(env:Cloudflare.Env){
+export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
  const db=env.DB,now=Math.floor(Date.now()/1000);
  // Atomic lease: concurrent requests and cron must not send the same row together.
- const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 ORDER BY id LIMIT 20) RETURNING *').bind(now+60,now).all<any>()).results;
+ const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 AND (? IS NULL OR id=?) ORDER BY id LIMIT 20) RETURNING *').bind(now+60,now,deliveryId??null,deliveryId??null).all<any>()).results;
  if(!rows.length)return;
  const signing=await keys(db);
  for(let i=0;i<rows.length;i+=4)await Promise.all(rows.slice(i,i+4).map(async row=>{
   try{
-   const finish=()=>db.prepare('UPDATE push_deliveries SET done=1 WHERE id=?').bind(row.id).run();
+   const finish=(state='skipped',status=0)=>db.prepare('UPDATE push_deliveries SET done=1,delivery_state=?,provider_status=? WHERE id=?').bind(state,status,row.id).run();
    const s=await db.prepare('SELECT * FROM push_subscriptions WHERE id=? AND user=?').bind(row.subscription,row.user).first<any>();
    if(!s||now-row.created>(row.kind==='call'?60:86400)){await finish();return}
    if(row.conversation){
@@ -60,11 +65,11 @@ export async function dispatchPush(env:Cloudflare.Env){
    const payload={title:'eConect',body,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
    const response=await fetch(s.endpoint,{method:'POST',redirect:'error',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:row.kind==='call'?'high':'normal'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
-   if(response.ok){await finish();return}
-   if(response.status===404||response.status===410){await db.prepare('DELETE FROM push_subscriptions WHERE id=?').bind(s.id).run();await finish();return}
-   if(response.status>=400&&response.status<500&&response.status!==429){await finish();console.error('Push provider rejected delivery',response.status);return}
-   await db.prepare('UPDATE push_deliveries SET next_attempt=? WHERE id=?').bind(now+Math.min(3600,60*2**row.attempts),row.id).run();
-  }catch{console.error('Push delivery failed; retry scheduled')}
+   if(response.ok){await finish('accepted',response.status);return}
+   if(response.status===404||response.status===410){await db.prepare('DELETE FROM push_subscriptions WHERE id=?').bind(s.id).run();await finish('expired',response.status);return}
+   if(response.status>=400&&response.status<500&&response.status!==429){await finish('rejected',response.status);console.error('Push provider rejected delivery',response.status);return}
+   await db.prepare("UPDATE push_deliveries SET next_attempt=?,delivery_state='retrying',provider_status=? WHERE id=?").bind(now+Math.min(3600,60*2**row.attempts),response.status,row.id).run();
+  }catch{await db.prepare("UPDATE push_deliveries SET delivery_state='retrying' WHERE id=?").bind(row.id).run();console.error('Push delivery failed; retry scheduled')}
  }));
  await db.prepare('DELETE FROM push_deliveries WHERE created<?').bind(now-172800).run();
 }

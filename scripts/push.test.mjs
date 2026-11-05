@@ -43,6 +43,14 @@ sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('m2',
 sqlite.exec("INSERT INTO message_reads(user,conversation,last_row) VALUES('bob','chat',9999)");await push.dispatchPush(env);assert.equal(sends,1,'already-read message suppressed');
 sqlite.exec("INSERT INTO activity_notifications(user,label) VALUES('bob','New activity')");providerStatus=503;await push.dispatchPush(env);assert.equal(sends,2);assert.equal(sqlite.prepare('SELECT done FROM push_deliveries ORDER BY id DESC LIMIT 1').get().done,0);
 sqlite.exec('UPDATE push_deliveries SET next_attempt=0 WHERE done=0');providerStatus=410;await push.dispatchPush(env);assert.equal(sqlite.prepare('SELECT count(*) n FROM push_subscriptions').get().n,0,'expired registrations removed');
+providerStatus=403;assert.equal((await req('subscribe',sub)).status,200);
+const rejected=await req('test',sub);assert.equal(rejected.status,502);assert.match((await rejected.json()).error,/HTTP 403/);
+assert.equal(sqlite.prepare("SELECT delivery_state FROM push_deliveries WHERE kind='test' ORDER BY id DESC LIMIT 1").get().delivery_state,'rejected');
+assert.equal((await req('test',sub)).status,429);
+sqlite.exec("UPDATE push_deliveries SET created=unixepoch()-65 WHERE kind='test'");
+providerStatus=201;const accepted=await req('test',sub);assert.equal(accepted.status,200);assert.equal((await accepted.json()).state,'accepted');
+sqlite.exec("UPDATE push_deliveries SET created=unixepoch()-65 WHERE kind='test'");
+providerStatus=410;const expired=await req('test',sub);assert.equal(expired.status,502);assert.equal((await expired.json()).code,'PUSH_EXPIRED');
 user=null;assert.equal((await req('subscribe',sub)).status,401);
 const listeners={},shown=[],opened=[];const scope={location:{origin:'https://econectapp.com'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
 vm.runInNewContext(readFileSync('public/sw.js','utf8'),{self:scope,URL,Date});
