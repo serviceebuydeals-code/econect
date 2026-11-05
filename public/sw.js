@@ -7,7 +7,7 @@ self.addEventListener('push',event=>{
  const target=url.origin===self.location.origin?url.pathname+url.search:'/';
  event.waitUntil(self.registration.showNotification(data.title||'eConect',{
   body:data.expires&&data.expires<Date.now()?'Open eConect to check your updates.':data.body||'You have a new update.',
-  icon:'/icon-192.png',badge:'/icon-192.png',tag:data.tag||'econect-update',
+  icon:'/icon-192.png',badge:'/notification-badge.png',tag:data.tag||'econect-update',
   silent:false,data:{url:target},renotify:true
  }));
 });
