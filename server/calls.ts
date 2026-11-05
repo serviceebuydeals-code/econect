@@ -43,9 +43,9 @@ export async function callsRoute(r:Request,env:Cloudflare.Env):Promise<Response>
   if(b.offer?.type!=='offer'||typeof b.offer.sdp!=='string'||b.offer.sdp.length>50000)fail('Invalid call offer.');
   await q("INSERT INTO auth_attempts(key,count,reset_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN reset_at<? THEN 1 ELSE count+1 END,reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END",'call-start:'+uid,now+900000,now,now).run();
   if((await one('SELECT count FROM auth_attempts WHERE key=?','call-start:'+uid)).count>30)fail('Too many call attempts. Please try later.',429);
-  if((await one('SELECT CAST(round((balance+bonus)*100) AS INTEGER) total FROM profiles WHERE id=?',uid)).total<20)fail('Insufficient eCoin. At least 0.2 points is required to start a call.',402);
+  if((await one('SELECT CAST(round((balance+bonus)*100) AS INTEGER) total FROM profiles WHERE id=?',uid)).total<200)fail('Insufficient eCoin. At least 2 points are required to start a call.',402);
   const person=c.starter===uid?c.recipient:c.starter;
-  await db.batch([q('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen,rate_hundredths) VALUES(?,?,?,?,?,?,?,?,4)',b.id,c.id,uid,person,b.video?1:0,now,now+60000,now),q("INSERT INTO rtc_signals(call_id,sender,kind,body,created) VALUES(?,?,'offer',?,?)",b.id,uid,JSON.stringify(b.offer),now)]);
+  await db.batch([q('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen,rate_hundredths) VALUES(?,?,?,?,?,?,?,?,40)',b.id,c.id,uid,person,b.video?1:0,now,now+60000,now),q("INSERT INTO rtc_signals(call_id,sender,kind,body,created) VALUES(?,?,'offer',?,?)",b.id,uid,JSON.stringify(b.offer),now)]);
   return Response.json({id:b.id});
  }
  const c=await readCall(b.id);
