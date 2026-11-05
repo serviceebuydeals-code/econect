@@ -21,7 +21,7 @@ const header=await web.vapidHeader('https://fcm.googleapis.com/test',publicKey,p
 assert.ok(await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},signing.publicKey,web.bytes(parts[2]),new TextEncoder().encode(parts.slice(0,2).join('.'))));assert.equal(JSON.parse(Buffer.from(parts[1],'base64url')).aud,'https://fcm.googleapis.com');
 const sqlite=new DatabaseSync(':memory:');for(const name of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+name,'utf8'));
 const db={prepare(sql){let args=[];return {bind(...values){args=values;return this},async first(){return sqlite.prepare(sql).get(...args)||null},async all(){return {results:sqlite.prepare(sql).all(...args)}},async run(){return {meta:{changes:Number(sqlite.prepare(sql).run(...args).changes)}}}}},async batch(statements){sqlite.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());sqlite.exec('COMMIT');return out}catch(e){sqlite.exec('ROLLBACK');throw e}}};
-let user={userId:'bob'};globalThis.__pushTest={web,getUser:async()=>user};
+let user={userId:'bob'};let capturedPayload;globalThis.__pushTest={web:{...web,encryptPush:async(sub,payload)=>{capturedPayload=payload;return web.encryptPush(sub,payload)}},getUser:async()=>user};
 const push=await load(readFileSync('server/push.ts','utf8').replace("import {getUser} from './auth';","const getUser=globalThis.__pushTest.getUser;").replace(/import .* from '.\/web-push';/,"const {base64,bytes,encryptPush,vapidHeader,validEndpoint}=globalThis.__pushTest.web;"));
 const env={DB:db,APP_ORIGIN:'https://econectapp.com'};
 const req=(path,data,origin='https://econectapp.com')=>push.pushRoute(new Request('https://econectapp.com/api/push/'+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)}),env);
@@ -51,10 +51,21 @@ sqlite.exec("UPDATE push_deliveries SET created=unixepoch()-65 WHERE kind='test'
 providerStatus=201;const accepted=await req('test',sub);assert.equal(accepted.status,200);assert.equal((await accepted.json()).state,'accepted');
 sqlite.exec("UPDATE push_deliveries SET created=unixepoch()-65 WHERE kind='test'");
 providerStatus=410;const expired=await req('test',sub);assert.equal(expired.status,502);assert.equal((await expired.json()).code,'PUSH_EXPIRED');
+
+user={userId:'bob'};providerStatus=201;await req('subscribe',sub);
+for(const name of ['alice','bob'])sqlite.prepare('INSERT INTO profiles(id,username,name,surname,age,country,state,city,origin_country,origin_state) VALUES(?,?,?,?,?,?,?,?,?,?)').run(name,name,name,'Test',25,'NG','Lagos','Lagos','NG','Lagos');
+const callId=crypto.randomUUID();sqlite.prepare('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen) VALUES(?,?,?,?,?,?,?,?)').run(callId,'chat','alice','bob',1,Date.now(),Date.now()+60000,Date.now());
+await push.dispatchPush(env);assert.equal(capturedPayload.kind,'call');assert.equal(capturedPayload.callId,callId);assert.equal(capturedPayload.title,'Incoming video call');assert.match(capturedPayload.body,/alice/);assert.match(capturedPayload.url,/call=/);
+const beforeEnded=sends;sqlite.prepare("UPDATE rtc_calls SET status='ended' WHERE id=?").run(callId);
+sqlite.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,conversation) SELECT id,user,'call',?,'chat' FROM push_subscriptions WHERE user='bob'").run('rtc:'+callId);
+await push.dispatchPush(env);assert.equal(sends,beforeEnded,'ended calls must not send stale ringing notifications');
+
 user=null;assert.equal((await req('subscribe',sub)).status,401);
 const listeners={},shown=[],opened=[];const scope={location:{origin:'https://econectapp.com'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
-vm.runInNewContext(readFileSync('public/sw.js','utf8'),{self:scope,URL,Date});
+let declineRequest;vm.runInNewContext(readFileSync('public/sw.js','utf8'),{self:scope,URL,Date,fetch:async(url,options)=>{declineRequest={url,options};return new Response(null,{status:200})}});
 let pending;listeners.push({data:{json:()=>payload},waitUntil:p=>pending=p});await pending;assert.equal(shown[0].options.silent,false);assert.equal(shown[0].options.data.url,payload.url);
 listeners.notificationclick({notification:{close(){},data:{url:'/?notification=messages'}},waitUntil:p=>pending=p});await pending;assert.equal(opened[0],'https://econectapp.com/?notification=messages');
 listeners.push({data:{json:()=>({url:'https://evil.test/'})},waitUntil:p=>pending=p});await pending;assert.equal(shown[1].options.data.url,'/');
+listeners.push({data:{json:()=>({kind:'call',callId,url:'/?notification=messages',expires:Date.now()+60000})},waitUntil:p=>pending=p});await pending;assert.equal(shown.at(-1).options.requireInteraction,true);assert.equal(shown.at(-1).options.actions[1].action,'decline-call');
+listeners.notificationclick({action:'decline-call',notification:{close(){},data:{callId,url:'/?notification=messages'}},waitUntil:p=>pending=p});await pending;assert.equal(declineRequest.url,'/api/calls/hangup');assert.equal(declineRequest.options.credentials,'include');assert.equal(JSON.parse(declineRequest.options.body).id,callId);
 console.log('PASS: Web Push encryption/decryption, VAPID signature, SSRF rejection, ownership/auth, idempotent registration, recipient-only triggers, leases, read suppression, retries, expiry cleanup and background service-worker notification/click.');

@@ -44,15 +44,18 @@ export async function pushRoute(r:Request,env:Cloudflare.Env){
 export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
  const db=env.DB,now=Math.floor(Date.now()/1000);
  // Atomic lease: concurrent requests and cron must not send the same row together.
- const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 AND (? IS NULL OR id=?) ORDER BY id LIMIT 20) RETURNING *').bind(now+60,now,deliveryId??null,deliveryId??null).all<any>()).results;
+ const rows=(await db.prepare('UPDATE push_deliveries SET next_attempt=?,attempts=attempts+1 WHERE id IN(SELECT id FROM push_deliveries WHERE done=0 AND next_attempt<=? AND attempts<6 AND (? IS NULL OR id=?) ORDER BY CASE WHEN kind=\'call\' THEN 0 ELSE 1 END,id LIMIT 20) RETURNING *').bind(now+60,now,deliveryId??null,deliveryId??null).all<any>()).results;
  if(!rows.length)return;
  const signing=await keys(db);
  for(let i=0;i<rows.length;i+=4)await Promise.all(rows.slice(i,i+4).map(async row=>{
   try{
    const finish=(state='skipped',status=0)=>db.prepare('UPDATE push_deliveries SET done=1,delivery_state=?,provider_status=? WHERE id=?').bind(state,status,row.id).run();
-   let giftSender='';const s=await db.prepare('SELECT * FROM push_subscriptions WHERE id=? AND user=?').bind(row.subscription,row.user).first<any>();
+   let giftSender='',callId='',callerName='',callVideo=false;const s=await db.prepare('SELECT * FROM push_subscriptions WHERE id=? AND user=?').bind(row.subscription,row.user).first<any>();
    if(!s||now-row.created>(row.kind==='call'?60:86400)){await finish();return}
-   if(row.conversation){
+   if(row.kind==='call'&&row.source.startsWith('rtc:')){
+    callId=row.source.slice(4);const c=await db.prepare("SELECT c.status,c.expires,c.video,p.name,p.username FROM rtc_calls c JOIN profiles p ON p.id=c.caller WHERE c.id=? AND c.recipient=?").bind(callId,row.user).first<any>();
+    if(!c||c.status!=='ringing'||c.expires<=Date.now()){await finish();return}callerName=c.name||c.username;callVideo=!!c.video;
+   }else if(row.conversation){
     const m=await db.prepare('SELECT m.rowid n,m.kind FROM messages m WHERE m.id=? AND m.conversation=?').bind(row.source,row.conversation).first<any>();
     if(!m){await finish();return}
     const read=await db.prepare('SELECT last_row FROM message_reads WHERE user=? AND conversation=?').bind(row.user,row.conversation).first<any>();
@@ -61,8 +64,8 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
    }
    if(row.kind==='activity'){const a=await db.prepare('SELECT n.read_at,(SELECT p.username FROM gift_ledger_senders g JOIN profiles p ON p.id=g.sender_id WHERE g.ledger_id=n.ledger_id LIMIT 1) gift_sender_username FROM activity_notifications n WHERE n.id=? AND n.user=?').bind(row.source,row.user).first<any>();if(!a||a.read_at){await finish();return}giftSender=a.gift_sender_username||''}
    // Keep personal message content off the lock screen.
-   const body=row.kind==='call'?'You have an incoming call.':row.kind==='message'?'You have a new message.':row.kind==='test'?'Background notifications are enabled.':giftSender?'You received an eCoin gift from @'+giftSender+'.':'You have new activity.';
-   const payload={title:'eConect',body,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
+   const body=row.kind==='call'?(callerName?callerName+' is calling you.':'You have an incoming call.'):row.kind==='message'?'You have a new message.':row.kind==='test'?'Background notifications are enabled.':giftSender?'You received an eCoin gift from @'+giftSender+'.':'You have new activity.';
+   const payload={title:row.kind==='call'?(callVideo?'Incoming video call':'Incoming audio call'):'eConect',body,kind:row.kind,callId,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):'')+(callId?'&call='+encodeURIComponent(callId):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
    const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:row.kind==='call'?'high':'normal'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
    if(response.ok){await finish('accepted',response.status);return}
