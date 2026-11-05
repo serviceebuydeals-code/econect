@@ -37,7 +37,7 @@ sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('ice'
 assert.equal(sqlite.prepare('SELECT count(*) n FROM push_deliveries').get().n,1);
 sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('self','chat','bob','text','own')");
 assert.equal(sqlite.prepare('SELECT count(*) n FROM push_deliveries').get().n,1);
-let sends=0,providerStatus=201;globalThis.fetch=async(url,options)=>{sends++;assert.equal(options.redirect,'manual');assert.equal(options.headers['Content-Encoding'],'aes128gcm');return new Response(null,{status:providerStatus})};
+let sends=0,providerStatus=201;globalThis.fetch=async(url,options)=>{sends++;assert.equal(options.redirect,'manual');assert.equal(options.headers.Urgency,'high','visible alerts request prompt delivery while the device sleeps');assert.equal(options.headers['Content-Encoding'],'aes128gcm');return new Response(null,{status:providerStatus})};
 await Promise.all([push.dispatchPush(env),push.dispatchPush(env)]);assert.equal(sends,1,'atomic lease prevents concurrent duplicates');await push.dispatchPush(env);assert.equal(sends,1);
 sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('m2','chat','alice','text','read')");
 sqlite.exec("INSERT INTO message_reads(user,conversation,last_row) VALUES('bob','chat',9999)");await push.dispatchPush(env);assert.equal(sends,1,'already-read message suppressed');
@@ -59,6 +59,17 @@ await push.dispatchPush(env);assert.equal(capturedPayload.kind,'call');assert.eq
 const beforeEnded=sends;sqlite.prepare("UPDATE rtc_calls SET status='ended' WHERE id=?").run(callId);
 sqlite.prepare("INSERT INTO push_deliveries(subscription,user,kind,source,conversation) SELECT id,user,'call',?,'chat' FROM push_subscriptions WHERE user='bob'").run('rtc:'+callId);
 await push.dispatchPush(env);assert.equal(sends,beforeEnded+1,'ended calls send one missed-call activity alert instead of stale ringing');assert.equal(capturedPayload.title,'Missed call');assert.match(capturedPayload.body,/alice/);
+
+// A persistent server-side test is dispatched after the page has closed; no client timer is involved.
+const beforeBackground=sends;const queued=await req('test-background',sub);assert.equal(queued.status,200);const queuedData=await queued.json();assert.equal(queuedData.state,'queued');
+assert.equal((await req('test-background',sub)).status,429,'only one outstanding test per device');
+await push.dispatchPush(env);assert.equal(sends,beforeBackground,'the delayed test cannot dispatch immediately');
+let diagnostics=await(await req('status',sub)).json();assert.equal(diagnostics.latestTest.id,queuedData.id);assert.equal(diagnostics.latestTest.attempts,0);
+user={userId:'alice'};const otherStatus=await(await req('status',sub)).json();assert.equal(otherStatus.enabled,false);assert.equal(otherStatus.latestTest,null,'device diagnostics are private to the registration owner');assert.equal((await req('test-background',sub)).status,400);
+user={userId:'bob'};const realNow=Date.now;Date.now=()=>realNow()+31000;try{await push.dispatchPush(env)}finally{Date.now=realNow}
+assert.equal(sends,beforeBackground+1,'the server dispatches the queued test without an open page');assert.equal(capturedPayload.kind,'test');
+diagnostics=await(await req('status',sub)).json();assert.equal(diagnostics.latestTest.delivery_state,'accepted');assert.equal(diagnostics.latestTest.provider_status,201);
+assert.equal(diagnostics.latestTest.done,1);await push.dispatchPush(env);assert.equal(sends,beforeBackground+1,'the background test sends once');
 
 user=null;assert.equal((await req('subscribe',sub)).status,401);
 const listeners={},shown=[],opened=[];const scope={location:{origin:'https://econectapp.com'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,options)=>shown.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
