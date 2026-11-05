@@ -41,5 +41,11 @@
     "crons": [
       "* * * * *"
     ]
+  },
+  "secrets": {
+    "required": [
+      "TURN_KEY_ID",
+      "TURN_API_TOKEN"
+    ]
   }
 }
