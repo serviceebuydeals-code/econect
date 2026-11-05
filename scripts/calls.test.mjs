@@ -51,7 +51,7 @@ const second=crypto.randomUUID();assert.equal((await request('start',{id:second,
 assert.equal(sqlite.prepare('SELECT count(*) n FROM ledger').get().n,0,'unanswered and unconnected calls are never charged');
 assert.ok(sqlite.prepare("SELECT label FROM activity_notifications WHERE user='bob' AND label LIKE 'Missed %'").get(),'missed calls notify the recipient');
 for(const video of [false,true]){
- sqlite.exec("UPDATE profiles SET balance=1000,bonus=50 WHERE id='alice';UPDATE profiles SET balance=0,bonus=0 WHERE id='bob'");
+ sqlite.exec("UPDATE profiles SET balance=1000,bonus=0.1 WHERE id='alice';UPDATE profiles SET balance=0,bonus=0 WHERE id='bob'");
  const paid=crypto.randomUUID(),base=clock;
  assert.equal((await request('start',{id:paid,conversation:'conversation',offer,video})).status,200);
  assert.equal((await request('answer',{id:paid,answer:{type:'answer',sdp:'answer'}},'bob')).status,200);
@@ -59,26 +59,26 @@ for(const video of [false,true]){
  assert.equal((await request('connected',{id:paid})).status,200);assert.equal(sqlite.prepare('SELECT connected_at FROM rtc_calls WHERE id=?').get(paid).connected_at,null,'both peers must confirm connection');
  assert.equal((await request('connected',{id:paid},'bob')).status,200);const connected=clock;
  await request('connected',{id:paid},'bob');assert.equal(sqlite.prepare('SELECT connected_at FROM rtc_calls WHERE id=?').get(paid).connected_at,connected,'connection retries never reset the clock');
- clock+=5800;await request('poll?id='+paid);let seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,100);assert.equal(seen.data.seconds,5);assert.equal(seen.data.connectedAt,connected);assert.equal(seen.data.caller,false);
- const sum=()=>sqlite.prepare("SELECT sum(balance+bonus) n FROM profiles WHERE id IN('alice','bob')").get().n;
- assert.equal(sum(),1050,'transfers conserve all points');
- assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='bob'").get().bonus,50,'bonus earnings cannot become withdrawable');
- clock+=6200;await request('poll?id='+paid);seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,240);
- const transfers=sqlite.prepare('SELECT count(*) n FROM point_transfers').get().n;
- await Promise.all([request('poll?id='+paid),request('poll?id='+paid,null,'bob')]);assert.equal(sqlite.prepare('SELECT count(*) n FROM point_transfers').get().n,transfers,'concurrent participant polls do not bill twice');
+ clock+=5800;await request('poll?id='+paid);let seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,0.2);assert.equal(seen.data.seconds,5);assert.equal(seen.data.connectedAt,connected);assert.equal(seen.data.caller,false);
+ const sum=()=>sqlite.prepare("SELECT CAST(round(sum(balance+bonus)*100) AS INTEGER) n FROM profiles WHERE id IN('alice','bob')").get().n;
+ assert.equal(sum(),100010,'transfers conserve all points');
+ assert.equal(sqlite.prepare("SELECT bonus FROM profiles WHERE id='bob'").get().bonus,0.1,'bonus earnings cannot become withdrawable');
+ clock+=6200;await request('poll?id='+paid);seen=await request('poll?id='+paid,null,'bob');assert.equal(seen.data.points,0.48);
+ const transfers=sqlite.prepare('SELECT count(*) n FROM rtc_call_charges').get().n;
+ await Promise.all([request('poll?id='+paid),request('poll?id='+paid,null,'bob')]);assert.equal(sqlite.prepare('SELECT count(*) n FROM rtc_call_charges').get().n,transfers,'concurrent participant polls do not bill twice');
  assert.equal((await request('hangup',{id:paid},'carol')).status,404);
  clock+=700;await request('hangup',{id:paid});const total=sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n;
- clock+=10000;await request('hangup',{id:paid},'bob');await request('poll?id='+paid);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,total,'hangup retries never charge again');assert.equal(sum(),1050);
+ clock+=10000;await request('hangup',{id:paid},'bob');await request('poll?id='+paid);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,total,'hangup retries never charge again');assert.equal(sum(),100010);
  assert.equal(sqlite.prepare('SELECT billed_seconds FROM rtc_calls WHERE id=?').get(paid).billed_seconds,12);
  assert.equal((await request('history?conversation=conversation',null,'carol')).status,404);
  const history=await request('history?conversation=conversation',null,'bob');assert.equal(history.data.find(c=>c.id===paid).billed_seconds,12);
- assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE '%earned 2.40 eCoin'").get().n,video?2:1,'one earning summary per finished call');
+ assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE '%earned 0.48 points'").get().n,video?2:1,'one earning summary per finished call');
  assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Audio call · +%' OR label LIKE 'Video call · +%'").get().n,0,'meter ticks do not send a notification storm');
 }
-sqlite.exec("UPDATE profiles SET balance=50,bonus=50 WHERE id='alice'");
+sqlite.exec("UPDATE profiles SET balance=0.1,bonus=0.1 WHERE id='alice'");
 const limited=crypto.randomUUID();await request('start',{id:limited,conversation:'conversation',offer});await request('answer',{id:limited,answer:{type:'answer',sdp:'answer'}},'bob');await request('connected',{id:limited});await request('connected',{id:limited},'bob');clock+=7000;
-let stopped=await request('poll?id='+limited);assert.equal(stopped.data.status,'ended');assert.equal(stopped.data.endReason,'insufficient');assert.equal(stopped.data.points,100);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,0);
-assert.equal((await request('start',{id:crypto.randomUUID(),conversation:'conversation',offer})).status,402,'a caller without 1 eCoin cannot start a call');
+let stopped=await request('poll?id='+limited);assert.equal(stopped.data.status,'ended');assert.equal(stopped.data.endReason,'insufficient');assert.equal(stopped.data.points,0.2);assert.equal(sqlite.prepare("SELECT balance+bonus n FROM profiles WHERE id='alice'").get().n,0);
+assert.equal((await request('start',{id:crypto.randomUUID(),conversation:'conversation',offer})).status,402,'a caller without 0.2 points cannot start a call');
 sqlite.exec("UPDATE profiles SET balance=1000,bonus=0 WHERE id='alice'");
 const stale=crypto.randomUUID();await request('start',{id:stale,conversation:'conversation',offer});await request('answer',{id:stale,answer:{type:'answer',sdp:'answer'}},'bob');await request('connected',{id:stale});await request('connected',{id:stale},'bob');clock+=60000;await globalThis.__callMeter.expireCalls(env);
 assert.equal(sqlite.prepare('SELECT billed_seconds FROM rtc_calls WHERE id=?').get(stale).billed_seconds,5,'abrupt offline calls cannot keep billing indefinitely');
@@ -97,6 +97,20 @@ assert.throws(()=>sqlite.prepare("INSERT INTO wallet_withdrawals SELECT * FROM w
 sqlite.exec("INSERT INTO payments(id,buyer,recipient,coins,kind) VALUES('manual-alert','alice','alice',1,'wallet');UPDATE payments SET reference='bank-reference' WHERE id='manual-alert';UPDATE payments SET reference='bank-reference' WHERE id='manual-alert'");
 assert.equal(sqlite.prepare("SELECT count(*) n FROM activity_notifications WHERE label LIKE 'Admin: payment submitted%'").get().n,2);
 Date.now=realNow;
+// Upgrading keeps previously charged points intact and applies the new rate only going forward.
+const historical=new DatabaseSync(':memory:');
+for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')&&f<'0027').sort())historical.exec(readFileSync('drizzle/'+file,'utf8'));
+for(const u of ['old-caller','old-recipient'])historical.prepare("INSERT INTO profiles(id,username,name,surname,age,country,state,city,origin_country,origin_state,balance) VALUES(?,?,?,'Test',25,'NG','Lagos','Lagos','NG','Lagos',1000)").run(u,u,u);
+historical.exec("INSERT INTO conversations(id,starter,recipient) VALUES('old-chat','old-caller','old-recipient')");
+const histNow=realNow();historical.prepare("INSERT INTO rtc_calls(id,conversation,caller,recipient,video,status,created,expires,caller_seen,recipient_seen,connected_at,billed_seconds) VALUES('old-call','old-chat','old-caller','old-recipient',0,'active',?,?,?,?,?,10)").run(histNow-20000,histNow+60000,histNow,histNow,histNow-11000);
+historical.exec(readFileSync('drizzle/0027_fractional_call_points.sql','utf8'));
+assert.equal(historical.prepare("SELECT charged_hundredths FROM rtc_calls WHERE id='old-call'").get().charged_hundredths,20000);assert.equal(historical.prepare("SELECT count(*) n FROM ledger").get().n,0,'migration creates no retroactive wallet entries');
+const historicalDB={prepare(sql){let values=[];return{bind(...v){values=v;return this},async run(){return{meta:{changes:Number(historical.prepare(sql).run(...values).changes)}}}}}};
+await globalThis.__callMeter.meterCall(historicalDB,'old-call',histNow);
+assert.equal(historical.prepare("SELECT charged_hundredths FROM rtc_calls WHERE id='old-call'").get().charged_hundredths,20004);
+assert.equal(historical.prepare("SELECT balance FROM profiles WHERE id='old-caller'").get().balance,999.96);
+assert.equal(historical.prepare("SELECT balance FROM profiles WHERE id='old-recipient'").get().balance,1000.04);
+historical.close();
 let provider=0;globalThis.fetch=async(url,options)=>{provider++;assert.ok(url.endsWith('/credentials/generate-ice-servers'));assert.equal(options.headers.Authorization,'Bearer private-key');assert.equal(JSON.parse(options.body).ttl,86400);return Response.json({iceServers:[{urls:['turns:turn.cloudflare.com:443?transport=tcp'],username:'temporary',credential:'short-lived'}]})};
 env.TURN_KEY_ID='key-id';env.TURN_API_TOKEN='private-key';const config=await request('config');assert.equal(config.data.relay,true);assert.equal(provider,1);assert.equal(JSON.stringify(config.data).includes('private-key'),false);sqlite.close();
 console.log('PASS: early ICE survives Answer; streamless audio tracks play; call authorization, one-answer claims, busy checks, separate event cursors, caller push, expiry, hangup and ephemeral TURN credentials work; connected call billing conserves points, retains bonus restrictions, stops at insufficient funds, survives retries, limits stale sessions, records missed calls and notifies every admin of withdrawals.');

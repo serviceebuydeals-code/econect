@@ -250,4 +250,20 @@ assert.ok(giftActors.length>=3);assert.ok(giftActors.every(l=>l.actor_id==='gift
 assert.equal((await request('wallet',undefined,'carol')).data.ledger.some(l=>l.actor_id==='actor-payer'),false);
 console.log('PASS: likes/comments identify the real payer in both balance buckets, sent entries identify the recipient, wallet/direct gifts provide clickable sender IDs, other accounts cannot see these receipts, and points remain conserved.');
 
+
+const fractionalId=crypto.randomUUID();sqlite.exec("INSERT INTO conversations(id,starter,recipient) VALUES('fractional-chat','actor-payer','actor-poster')");
+sqlite.prepare("INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen,rate_hundredths) VALUES(?,'fractional-chat','actor-payer','actor-poster',0,?,?,?,4)").run(fractionalId,Date.now(),Date.now()+60000,Date.now());
+sqlite.prepare("UPDATE rtc_calls SET billed_seconds=5,charged_hundredths=20 WHERE id=?").run(fractionalId);
+const fractionalCredits=(await request('wallet-activity',undefined,'actor-poster')).data.rows.filter(l=>l.label==='Audio call');
+const fractionalDebits=(await request('wallet-activity',undefined,'actor-payer')).data.rows.filter(l=>l.label==='Audio call');
+assert.equal(Math.round(fractionalCredits.reduce((n,l)=>n+l.points,0)*100),20);
+assert.equal(Math.round(fractionalDebits.reduce((n,l)=>n+l.points,0)*100),-20);
+assert.ok(fractionalCredits.every(l=>l.actor_id==='actor-payer'&&l.actor_username==='actor_payer'));
+assert.ok(fractionalDebits.every(l=>l.actor_id==='actor-poster'&&l.actor_username==='actor_poster'));
+const fractionalLedger=sqlite.prepare('SELECT count(*) n FROM ledger').get().n;
+assert.throws(()=>sqlite.prepare("UPDATE rtc_calls SET billed_seconds=100000,charged_hundredths=400000 WHERE id=?").run(fractionalId),/Insufficient/);
+assert.equal(sqlite.prepare('SELECT charged_hundredths FROM rtc_calls WHERE id=?').get(fractionalId).charged_hundredths,20);
+assert.equal(sqlite.prepare('SELECT count(*) n FROM ledger').get().n,fractionalLedger,'an overdrawn charge rolls back both wallet entries and the call meter');
+console.log('PASS: fractional calls debit and credit exactly 0.2 points, keep clickable wallet counterparties, and roll back overdrafts atomically.');
+
 sqlite.close();delete globalThis.__econectTest;

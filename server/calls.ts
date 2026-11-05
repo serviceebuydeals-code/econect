@@ -21,10 +21,10 @@ export async function callsRoute(r:Request,env:Cloudflare.Env):Promise<Response>
   const rows=(await q("SELECT c.id,c.conversation,c.video,c.created,c.expires,p.id person_id,p.username,p.name,p.avatar FROM rtc_calls c JOIN profiles p ON p.id=c.caller WHERE c.recipient=? AND c.status='ringing' AND c.expires>? ORDER BY c.created DESC LIMIT 1",uid,now).all()).results;return Response.json(rows);
  }
  const readCall=async(id:string)=>{let call=await one('SELECT * FROM rtc_calls WHERE id=? AND (caller=? OR recipient=?)',id,uid,uid);if(!call)fail('Call unavailable.',404);if(call.status!=='ended'&&call.expires<=now){await meterCall(db,id,now,true,'expired');call=await one('SELECT * FROM rtc_calls WHERE id=?',id)}return call};
- const view=(c:any)=>({id:c.id,status:c.status,video:!!c.video,conversation:c.conversation,connectedAt:c.connected_at,meterUntil:Math.min(c.caller_seen,c.recipient_seen)+5000,serverNow:now,seconds:c.billed_seconds,points:c.billed_seconds*20,caller:c.caller===uid,endReason:c.end_reason});
+ const view=(c:any)=>({id:c.id,status:c.status,video:!!c.video,conversation:c.conversation,connectedAt:c.connected_at,meterUntil:Math.min(c.caller_seen,c.recipient_seen)+5000,serverNow:now,seconds:c.billed_seconds,points:c.charged_hundredths/100,rateHundredths:c.rate_hundredths,caller:c.caller===uid,endReason:c.end_reason});
  if(r.method==='GET'&&path==='history'){
   const conversation=await one('SELECT * FROM conversations WHERE id=? AND (starter=? OR recipient=?)',url.searchParams.get('conversation'),uid,uid);if(!conversation)fail('Conversation unavailable.',404);
-  const rows=(await q("SELECT id,caller,recipient,video,status,created,answered_at,connected_at,ended,billed_seconds,end_reason FROM rtc_calls WHERE ((caller=? AND recipient=?) OR (caller=? AND recipient=?)) ORDER BY created DESC LIMIT 20",conversation.starter,conversation.recipient,conversation.recipient,conversation.starter).all()).results;return Response.json(rows);
+  const rows=(await q("SELECT id,caller,recipient,video,status,created,answered_at,connected_at,ended,billed_seconds,charged_hundredths,rate_hundredths,end_reason FROM rtc_calls WHERE ((caller=? AND recipient=?) OR (caller=? AND recipient=?)) ORDER BY created DESC LIMIT 20",conversation.starter,conversation.recipient,conversation.recipient,conversation.starter).all()).results;return Response.json(rows);
  }
 
  if(r.method==='GET'&&path==='poll'){
@@ -43,9 +43,9 @@ export async function callsRoute(r:Request,env:Cloudflare.Env):Promise<Response>
   if(b.offer?.type!=='offer'||typeof b.offer.sdp!=='string'||b.offer.sdp.length>50000)fail('Invalid call offer.');
   await q("INSERT INTO auth_attempts(key,count,reset_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN reset_at<? THEN 1 ELSE count+1 END,reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END",'call-start:'+uid,now+900000,now,now).run();
   if((await one('SELECT count FROM auth_attempts WHERE key=?','call-start:'+uid)).count>30)fail('Too many call attempts. Please try later.',429);
-  if((await one('SELECT balance+bonus total FROM profiles WHERE id=?',uid)).total<100)fail('Insufficient eCoin. At least 1 eCoin is required to start a call.',402);
+  if((await one('SELECT CAST(round((balance+bonus)*100) AS INTEGER) total FROM profiles WHERE id=?',uid)).total<20)fail('Insufficient eCoin. At least 0.2 points is required to start a call.',402);
   const person=c.starter===uid?c.recipient:c.starter;
-  await db.batch([q('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen) VALUES(?,?,?,?,?,?,?,?)',b.id,c.id,uid,person,b.video?1:0,now,now+60000,now),q("INSERT INTO rtc_signals(call_id,sender,kind,body,created) VALUES(?,?,'offer',?,?)",b.id,uid,JSON.stringify(b.offer),now)]);
+  await db.batch([q('INSERT INTO rtc_calls(id,conversation,caller,recipient,video,created,expires,caller_seen,rate_hundredths) VALUES(?,?,?,?,?,?,?,?,4)',b.id,c.id,uid,person,b.video?1:0,now,now+60000,now),q("INSERT INTO rtc_signals(call_id,sender,kind,body,created) VALUES(?,?,'offer',?,?)",b.id,uid,JSON.stringify(b.offer),now)]);
   return Response.json({id:b.id});
  }
  const c=await readCall(b.id);
