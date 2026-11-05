@@ -232,4 +232,22 @@ assert.equal(allRows.length,126);assert.equal(new Set(allRows.map(l=>l.id)).size
 assert.equal((await request('wallet-activity',undefined,null)).status,401);
 console.log('PASS: ended/active legacy threads combine without data loss, per-thread read receipts remain accurate, outsiders are blocked, restart/race creates no duplicates, ending closes the whole pair, wallet shows newest 10 and private history paginates beyond 100.');
 
+
+for(const [user,username] of [['actor-poster','actor_poster'],['actor-payer','actor_payer']])assert.equal((await request('signup',{...form,name:user,username},user)).status,200);
+sqlite.prepare("UPDATE profiles SET balance=100,bonus=5 WHERE id='actor-payer'").run();
+await request('post',{body:'Actor attribution photo',media:[{type:'image',url:'/api/media?key=public/actor-photo'}]},'actor-poster');
+const actorPost=sqlite.prepare("SELECT id FROM posts WHERE user='actor-poster'").get().id,actorTotal=sqlite.prepare('SELECT sum(balance+bonus) n FROM profiles').get().n;
+await request('like',{post:actorPost,id:crypto.randomUUID()},'actor-payer');
+await request('comment',{post:actorPost,body:'Named sender comment'},'actor-payer');
+assert.equal(sqlite.prepare('SELECT sum(balance+bonus) n FROM profiles').get().n,actorTotal);
+const actorCredits=(await request('wallet',undefined,'actor-poster')).data.ledger.filter(l=>l.points>0&&['Post liked','New comment on your post'].includes(l.label));
+assert.equal(actorCredits.length,3,'like spanning bonus and withdrawable buckets plus regular comment');assert.equal(actorCredits.reduce((n,l)=>n+l.points,0),20);
+assert.ok(actorCredits.every(l=>l.actor_id==='actor-payer'&&l.actor_username==='actor_payer'&&l.gift_sender_username===null));
+const actorDebits=(await request('wallet-activity',undefined,'actor-payer')).data.rows.filter(l=>l.points<0);
+assert.ok(actorDebits.every(l=>l.actor_id==='actor-poster'&&l.actor_username==='actor_poster'));
+const giftActors=(await request('wallet-activity',undefined,'gift-receiver')).data.rows.filter(l=>l.gift_sender_username);
+assert.ok(giftActors.length>=3);assert.ok(giftActors.every(l=>l.actor_id==='gift-giver'&&l.actor_username==='gift_giver_new'));
+assert.equal((await request('wallet',undefined,'carol')).data.ledger.some(l=>l.actor_id==='actor-payer'),false);
+console.log('PASS: likes/comments identify the real payer in both balance buckets, sent entries identify the recipient, wallet/direct gifts provide clickable sender IDs, other accounts cannot see these receipts, and points remain conserved.');
+
 sqlite.close();delete globalThis.__econectTest;
