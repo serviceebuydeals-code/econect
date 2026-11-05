@@ -12,7 +12,7 @@
     "deploy": "npm run build && npm run db:remote && wrangler deploy --triggers \"* * * * *\"",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
-    "test": "node scripts/push-runtime.test.mjs && node scripts/push.test.mjs && node scripts/video-fullscreen.test.mjs && node scripts/youtube.test.mjs && node scripts/stream-upload.test.mjs && node scripts/stream-media.test.mjs && node scripts/install.test.mjs && node scripts/free-chat.test.mjs && node scripts/post-preview.test.mjs && node scripts/video.test.mjs && node scripts/navigation.test.mjs && node scripts/api.test.mjs && node scripts/auth.test.mjs && node scripts/market.test.mjs && node scripts/wealth.test.mjs && node scripts/withdrawal.test.mjs && node scripts/referral.test.mjs && node scripts/shop-chat.test.mjs && node scripts/paystack.test.mjs",
+    "test": "node scripts/profile-photo.test.mjs && node scripts/push-runtime.test.mjs && node scripts/push.test.mjs && node scripts/video-fullscreen.test.mjs && node scripts/youtube.test.mjs && node scripts/stream-upload.test.mjs && node scripts/stream-media.test.mjs && node scripts/install.test.mjs && node scripts/free-chat.test.mjs && node scripts/post-preview.test.mjs && node scripts/video.test.mjs && node scripts/navigation.test.mjs && node scripts/api.test.mjs && node scripts/auth.test.mjs && node scripts/market.test.mjs && node scripts/wealth.test.mjs && node scripts/withdrawal.test.mjs && node scripts/referral.test.mjs && node scripts/shop-chat.test.mjs && node scripts/paystack.test.mjs",
     "check": "tsc --noEmit"
   },
   "dependencies": {
@@ -26,6 +26,7 @@
     "react-dom": "19.2.6",
     "typescript": "5.9.3",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "heic-to": "1.6.7"
   }
 }
