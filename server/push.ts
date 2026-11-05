@@ -7,7 +7,7 @@ async function keys(db:D1Database){
  return await db.prepare('SELECT public_key,private_key FROM push_keys WHERE id=1').first<any>();
 }
 export async function pushRoute(r:Request,env:Cloudflare.Env){
- const auth=await getUser(r);if(!auth)return Response.json({error:'Please log in.'},{status:401});
+ const auth=await getUser(r);if(!auth)return Response.json({error:'Please log in.'},{status:401,headers:{'X-eConect-Push-Version':'2'}});
  const url=new URL(r.url),path=url.pathname.slice('/api/push/'.length),db=env.DB,uid=auth.userId;
  if(r.method==='GET'&&path==='key')return Response.json({publicKey:(await keys(db)).public_key});
  if(r.method!=='POST')return new Response('Method not allowed',{status:405});
@@ -64,8 +64,9 @@ export async function dispatchPush(env:Cloudflare.Env,deliveryId?:number){
    const body=row.kind==='call'?'You have an incoming call.':row.kind==='message'?'You have a new message.':row.kind==='test'?'Background notifications are enabled.':'You have new activity.';
    const payload={title:'eConect',body,url:'/?notification='+encodeURIComponent(row.kind==='message'||row.kind==='call'?'messages':'activity')+(row.conversation?'&conversation='+encodeURIComponent(row.conversation):''),tag:'econect-'+row.kind+'-'+(row.conversation||row.id),expires:(row.created+(row.kind==='call'?60:86400))*1000};
    const encrypted=await encryptPush(s,payload),authorization=await vapidHeader(s.endpoint,signing.public_key,signing.private_key,env.APP_ORIGIN||'https://econectapp.com');
-   const response=await fetch(s.endpoint,{method:'POST',redirect:'error',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:row.kind==='call'?'high':'normal'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
+   const response=await fetch(s.endpoint,{method:'POST',redirect:'manual',headers:{Authorization:authorization,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:String(row.kind==='call'?60:86400),Urgency:row.kind==='call'?'high':'normal'},body:encrypted.buffer as ArrayBuffer,signal:AbortSignal.timeout(10000)});
    if(response.ok){await finish('accepted',response.status);return}
+   if(response.status>=300&&response.status<400){await finish('rejected',response.status);console.error('Push redirect refused',response.status);return}
    if(response.status===404||response.status===410){await db.prepare('DELETE FROM push_subscriptions WHERE id=?').bind(s.id).run();await finish('expired',response.status);return}
    if(response.status>=400&&response.status<500&&response.status!==429){await finish('rejected',response.status);console.error('Push provider rejected delivery',response.status);return}
    await db.prepare("UPDATE push_deliveries SET next_attempt=?,delivery_state='retrying',provider_status=? WHERE id=?").bind(now+Math.min(3600,60*2**row.attempts),response.status,row.id).run();

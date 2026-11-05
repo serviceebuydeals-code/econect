@@ -37,7 +37,7 @@ sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('ice'
 assert.equal(sqlite.prepare('SELECT count(*) n FROM push_deliveries').get().n,1);
 sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('self','chat','bob','text','own')");
 assert.equal(sqlite.prepare('SELECT count(*) n FROM push_deliveries').get().n,1);
-let sends=0,providerStatus=201;globalThis.fetch=async(url,options)=>{sends++;assert.equal(options.redirect,'error');assert.equal(options.headers['Content-Encoding'],'aes128gcm');return new Response(null,{status:providerStatus})};
+let sends=0,providerStatus=201;globalThis.fetch=async(url,options)=>{sends++;assert.equal(options.redirect,'manual');assert.equal(options.headers['Content-Encoding'],'aes128gcm');return new Response(null,{status:providerStatus})};
 await Promise.all([push.dispatchPush(env),push.dispatchPush(env)]);assert.equal(sends,1,'atomic lease prevents concurrent duplicates');await push.dispatchPush(env);assert.equal(sends,1);
 sqlite.exec("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('m2','chat','alice','text','read')");
 sqlite.exec("INSERT INTO message_reads(user,conversation,last_row) VALUES('bob','chat',9999)");await push.dispatchPush(env);assert.equal(sends,1,'already-read message suppressed');

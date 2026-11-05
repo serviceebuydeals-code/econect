@@ -15,3 +15,5 @@ npm run build
 npm test
 npx wrangler deploy --dry-run
 After deployment, enable notifications from the installed PWA. Send a test and check the reported delivery result. Then close the app and send a message from a second account to verify background delivery. Send a message from another account, check the locked phone, and tap to verify conversation routing. Also check disabling notifications and logging out. Physical-device delivery and OS sound require this end-to-end test.
+
+Outbound delivery uses Workers-supported redirect: manual. Redirect responses are terminal failures and never followed, preventing credentials or encrypted payloads from being forwarded to another origin. scripts/push-runtime.test.mjs executes the real delivery path in bundled workerd with a simulated push provider.
