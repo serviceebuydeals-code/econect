@@ -22,6 +22,8 @@ assert.equal((await req('settings',{address:'support@econectapp.com',name:'Suppo
 assert.equal((await req('settings',{address:'support@evil.test',name:'Support'})).status,400);
 assert.equal((await req('settings',{address:'support@econectapp.com',name:'Bad\nBcc: other@example.test'})).status,400);
 let config=(await req('config')).data;assert.equal(config.address,'support@econectapp.com');assert.equal(config.hasKey,true);assert.equal(config.hasWebhookSecret,true);assert.equal(JSON.stringify(config).includes(secret),false);assert.equal(JSON.stringify(config).includes('test-only-mail-key'),false);
+assert.equal(config.provider,'cloudflare');assert.equal(config.canSend,false);
+await req('settings',{address:'support@econectapp.com',name:'eConect Support',provider:'resend'});
 const message={id:crypto.randomUUID(),to:'customer@example.test',subject:'Hello from eConect',body:'A private business message.'};
 blockSend=true;const sending=req('send',message);for(let i=0;i<10&&typeof blockSend!=='function';i++)await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof blockSend,'function');
 assert.equal((await req('send',message,'admin2')).status,409,'concurrent admin cannot send twice');blockSend();blockSend=null;

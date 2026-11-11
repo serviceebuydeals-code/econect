@@ -266,4 +266,10 @@ assert.equal(sqlite.prepare('SELECT charged_hundredths FROM rtc_calls WHERE id=?
 assert.equal(sqlite.prepare('SELECT count(*) n FROM ledger').get().n,fractionalLedger,'an overdrawn charge rolls back both wallet entries and the call meter');
 console.log('PASS: fractional calls debit and credit exactly 0.2 points, keep clickable wallet counterparties, and roll back overdrafts atomically.');
 
+// Private mailbox objects can never be fetched through chat/public media endpoints,
+ // even if a member forges a matching message in their own conversation.
+const mailKey='private/admin-mail/test/original.eml',mailURL='/api/media?key='+encodeURIComponent(mailKey)+'&conversation='+actorChat;
+sqlite.prepare("UPDATE conversations SET status='active' WHERE id=?").run(actorChat);
+sqlite.prepare("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('mail-probe',?,'actortwo','text',?)").run(actorChat,mailURL);
+assert.equal((await request('media?key='+encodeURIComponent(mailKey)+'&conversation='+actorChat,undefined,'actortwo')).status,403);
 sqlite.close();delete globalThis.__econectTest;

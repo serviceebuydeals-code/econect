@@ -47,5 +47,10 @@
       "TURN_KEY_ID",
       "TURN_API_TOKEN"
     ]
-  }
+  },
+  "send_email": [
+    {
+      "name": "MAIL_SEND"
+    }
+  ]
 }
