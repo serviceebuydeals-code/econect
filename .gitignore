@@ -6,3 +6,8 @@ dist/
 !.env.example
 *.tsbuildinfo
 *.log
+
+# Generated geographical assets
+shared/geo-countries.json
+shared/geo-index.json
+public/geo/

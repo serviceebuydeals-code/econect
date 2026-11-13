@@ -1,3 +1,4 @@
+import {countryFor,preferredMarketCountry,requestCountry} from '../shared/geography';
 import{getCoinPrice,coinAmount}from'./pricing';
 import {env} from 'cloudflare:workers';
 import {getUser} from './auth';
@@ -9,18 +10,24 @@ export async function marketRoute(r:Request):Promise<Response>{try{
  const db=env.DB,url=new URL(r.url),path=url.pathname.slice('/api/market/'.length),auth=await getUser(r),uid=auth?.userId;
  const q=(s:string,...v:any[])=>db.prepare(s).bind(...v),one=(s:string,...v:any[])=>q(s,...v).first<any>(),all=async(s:string,...v:any[])=>(await q(s,...v).all()).results;
  const guard=async()=>{if(!uid)error('Please log in to continue.',401);if(!await one('SELECT id FROM profiles WHERE id=?',uid))error('Create your profile first.',403)};
- const productSQL='SELECT m.*,p.username,p.name seller_name,p.avatar,c.name category_name,s.name subcategory_name,COALESCE(sh.phone,\'\') shop_phone FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory LEFT JOIN market_shops sh ON sh.seller=m.seller';
+ const listingCountrySQL="COALESCE(NULLIF(m.country_code,''),(SELECT code FROM geo_country_aliases WHERE alias=lower(trim(p.country)) LIMIT 1),'')";
+ const productSQL='SELECT m.*,'+listingCountrySQL+' listing_country,p.username,p.name seller_name,p.avatar,c.name category_name,s.name subcategory_name,COALESCE(sh.phone,\'\') shop_phone FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory LEFT JOIN market_shops sh ON sh.seller=m.seller';
  if(r.method==='GET'){
   if(path==='categories')return Response.json(await all('SELECT * FROM market_categories ORDER BY admin_created DESC,name'));
   if(path==='products'){
    const term=clean(url.searchParams.get('q'),150),shop=clean(url.searchParams.get('shop')),folder=clean(url.searchParams.get('folder')),page=Math.max(0,Math.min(100000,Number(url.searchParams.get('page'))||0));
-   const clauses=['m.active=1'],args:any[]=[];if(shop){clauses.push('p.username=? COLLATE NOCASE');args.push(shop)}if(folder){clauses.push('m.folder=?');args.push(folder)}
+   const profile=uid?await one('SELECT country FROM profiles WHERE id=?',uid):null,detected=requestCountry(r),registered=countryFor(profile?.country),requested=url.searchParams.get('country')||'auto';
+   const selected=requested==='*'?null:requested==='auto'?preferredMarketCountry(r,profile?.country):countryFor(requested);
+   if(requested!=='*'&&requested!=='auto'&&!selected)error('Choose a valid country.');
+   const countrySource=requested==='*'?'all':requested!=='auto'?'selected':detected?'current':registered?'profile':'all';
+   const clauses=['m.active=1'],args:any[]=[];if(!shop&&selected){clauses.push(listingCountrySQL+'=?');args.push(selected.code)}
+if(shop){clauses.push('p.username=? COLLATE NOCASE');args.push(shop)}if(folder){clauses.push('m.folder=?');args.push(folder)}
    if(term){clauses.push("(m.name LIKE ? ESCAPE '\\' OR m.description LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')");args.push(...Array(4).fill(like(term)))}
    const where=' WHERE '+clauses.join(' AND '),limit=shop||term?60:600,offset=shop||term?page*limit:0;
    const products=await all(productSQL+where+' ORDER BY m.created DESC,m.rowid DESC LIMIT ? OFFSET ?',...args,limit,offset);
    const count=await one('SELECT count(*) total FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory'+where,...args);
    const owner=shop?await one('SELECT p.id,p.username,p.name,p.surname,p.avatar,p.bio,COALESCE(s.phone,\'\') phone FROM profiles p LEFT JOIN market_shops s ON s.seller=p.id WHERE p.username=? COLLATE NOCASE',shop):null;
-   return Response.json({products,total:count.total,hasMore:!!(shop||term)&&offset+products.length<count.total,owner,folders:owner?await all("SELECT f.*,(SELECT images FROM market_products WHERE folder=f.id AND active=1 ORDER BY created DESC,rowid DESC LIMIT 1) images FROM market_folders f WHERE seller=? ORDER BY created DESC",owner.id):[]});
+   return Response.json({products,country:selected?.code||'',countrySource,detectedCountry:detected?.code||'',profileCountry:registered?.code||'',total:count.total,hasMore:!!(shop||term)&&offset+products.length<count.total,owner,folders:owner?await all("SELECT f.*,(SELECT images FROM market_products WHERE folder=f.id AND active=1 ORDER BY created DESC,rowid DESC LIMIT 1) images FROM market_folders f WHERE seller=? ORDER BY created DESC",owner.id):[]});
   }
   if(path==='product'){const p=await one(productSQL+' WHERE m.id=? AND m.active=1',url.searchParams.get('id'));if(!p)error('Product unavailable.',404);return Response.json(p)}
   if(path==='suggestions'){
@@ -39,6 +46,7 @@ export async function marketRoute(r:Request):Promise<Response>{try{
  }
  if(r.method!=='POST')error('Method not allowed',405);await guard();if(r.headers.get('origin')&&r.headers.get('origin')!==url.origin)error('Invalid origin',403);const b:any=await r.json();
  if(path==='product'){
+  const profile=await one('SELECT country FROM profiles WHERE id=?',uid),requestedCountry=b.countryCode??b.country,listingCountry=requestedCountry?countryFor(requestedCountry):countryFor(profile?.country)||requestCountry(r);if(!listingCountry)error('Choose a product country.');
   const name=clean(b.name,180),description=clean(b.description,10000),location=clean(b.location,180),price=Number(b.price),images=b.images;
   if(!name||!description||!location||!Number.isFinite(price)||price<=0||price>1e12)error('Complete all product details with a valid price.');
   if(!Array.isArray(images)||!images.length||images.length>10||images.some((v:any)=>typeof v!=='string'||!v.startsWith('/api/media?key=public')))error('Upload 1–10 product photos.');
@@ -48,7 +56,7 @@ export async function marketRoute(r:Request):Promise<Response>{try{
   if(!await one('SELECT id FROM market_categories WHERE id=? AND parent IS NULL',category))error('Choose a main category.');
   const statements:any[]=[];if(subcategory&&!await one('SELECT id FROM market_categories WHERE id=? AND parent=?',subcategory,category))error('Choose a subcategory of this main category.');
   if(!subcategory){const nameSub=clean(b.subcategoryName,80)||name.split(/\s+/).slice(0,2).join(' ');const existing=await one('SELECT id FROM market_categories WHERE parent=? AND name=? COLLATE NOCASE',category,nameSub);subcategory=existing?.id||uuid();if(!existing)statements.push(q('INSERT INTO market_categories(id,name,parent) VALUES(?,?,?)',subcategory,nameSub,category));}
-  statements.push(q('INSERT INTO market_products(id,seller,name,price,location,description,images,category,subcategory) VALUES(?,?,?,?,?,?,?,?,?)',productId,uid,name,price,location,description,JSON.stringify(images),category,subcategory));await db.batch(statements);return Response.json({id:productId});
+  statements.push(q('INSERT INTO market_products(id,seller,name,price,location,description,images,category,subcategory,country_code) VALUES(?,?,?,?,?,?,?,?,?,?)',productId,uid,name,price,location,description,JSON.stringify(images),category,subcategory,listingCountry!.code));await db.batch(statements);return Response.json({id:productId});
  }
  if(path==='buy'){
   const p=await one('SELECT * FROM market_products WHERE id=? AND active=1',b.product);if(!p||p.seller===uid)error('Choose another member’s product.');
@@ -83,7 +91,8 @@ export async function marketRoute(r:Request):Promise<Response>{try{
   const day=new Date(Date.now()+3600000).toISOString().slice(0,10);if((await one('SELECT count(*) n FROM market_ad_views WHERE user=? AND day=?',uid,day)).n>=3)return Response.json(null);
   if(await one('SELECT id FROM market_ad_views WHERE user=? AND day=? AND slot=?',uid,day,slot))return Response.json(null);
   const personalized=!!(await one('SELECT personalized FROM market_preferences WHERE user=?',uid))?.personalized;
-  const ad=await one("SELECT a.id promotion,m.*,p.username,p.name seller_name,p.avatar,c.name category_name FROM market_promotions a JOIN market_products m ON m.seller=a.seller AND (a.product IS NULL OR m.id=a.product) JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category WHERE a.status='confirmed' AND a.ends>CURRENT_TIMESTAMP AND m.active=1 AND a.seller!=? ORDER BY "+(personalized?"COALESCE((SELECT score FROM market_interests i WHERE i.user=? AND i.category=m.category AND i.updated>datetime('now','-90 days')),0) DESC, ":'')+"(SELECT count(*) FROM market_ad_views v WHERE v.user=? AND v.promotion=a.id AND v.day=?) ASC,random() LIMIT 1",uid,...(personalized?[uid]:[]),uid,day);
+  const localCountry=preferredMarketCountry(r,(await one('SELECT country FROM profiles WHERE id=?',uid))?.country);
+  const ad=await one("SELECT a.id promotion,m.*,p.username,p.name seller_name,p.avatar,c.name category_name FROM market_promotions a JOIN market_products m ON m.seller=a.seller AND (a.product IS NULL OR m.id=a.product) JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category WHERE a.status='confirmed' AND a.ends>CURRENT_TIMESTAMP AND m.active=1 AND a.seller!=? "+(localCountry?' AND '+listingCountrySQL+'=? ':'')+"ORDER BY "+(personalized?"COALESCE((SELECT score FROM market_interests i WHERE i.user=? AND i.category=m.category AND i.updated>datetime('now','-90 days')),0) DESC, ":'')+"(SELECT count(*) FROM market_ad_views v WHERE v.user=? AND v.promotion=a.id AND v.day=?) ASC,random() LIMIT 1",uid,...(localCountry?[localCountry.code]:[]),...(personalized?[uid]:[]),uid,day);
   if(!ad)return Response.json(null);
   // The conditional INSERT enforces the cap even when concurrent tabs request an ad.
   const saved=await q('INSERT OR IGNORE INTO market_ad_views(id,user,promotion,day,slot) SELECT ?,?,?,?,? WHERE (SELECT count(*) FROM market_ad_views WHERE user=? AND day=?)<3',uuid(),uid,ad.promotion,day,slot,uid,day).run();return Response.json(saved.meta.changes?{...ad,personalized}:null);

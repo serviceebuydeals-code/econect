@@ -1,3 +1,4 @@
+import {inlineGeography} from './test-geography.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import ts from 'typescript';
@@ -7,7 +8,7 @@ const db={prepare(sql){let vals=[];return{bind(...v){vals=v;return this},async f
 let identity=null;globalThis.__marketTest={env:{DB:db},getUser:async()=>identity};
 let code=readFileSync('server/market.ts','utf8').replace("import {env} from 'cloudflare:workers';",'const env=globalThis.__marketTest.env;').replace("import {getUser} from './auth';",'const getUser=globalThis.__marketTest.getUser;');
 code=code.replace("import{getCoinPrice,coinAmount}from'./pricing';",readFileSync('server/pricing.ts','utf8').replace(/export /g,''));
-code=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;const {marketRoute}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+code=ts.transpileModule(inlineGeography(code),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;const {marketRoute}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 async function req(path,body,user='alice',origin='https://econect.test'){identity=user?{userId:user,isAdmin:user==='admin'}:null;const r=await marketRoute(new Request('https://econect.test/api/market/'+path,body?{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify(body)}:{}));return{status:r.status,data:await r.json()}}
 for(const u of ['alice','bob','carol','admin'])sqlite.prepare('INSERT INTO profiles(id,username,name,surname,age,country,state,city,origin_country,origin_state,bonus) VALUES(?,?,?,?,25,?,?,?,?,?,200)').run(u,u,u,'Test','Nigeria','Lagos','Ikeja','Nigeria','Lagos');
 const balance=u=>sqlite.prepare('SELECT balance,bonus FROM profiles WHERE id=?').get(u);
@@ -47,4 +48,13 @@ assert.equal((await req('suggestions?q=Solar')).data.posts[0].id,'post');assert.
 // Bulk fixtures verify the 600-item window and that older products remain searchable.
 sqlite.prepare("UPDATE profiles SET balance=100000 WHERE id='alice'").run();const insert=sqlite.prepare("INSERT INTO market_products(id,seller,name,price,location,description,images,category,created) VALUES(?,'alice',?,1,'Lagos','description','[]','electronics',?)");for(let i=0;i<601;i++)insert.run('bulk'+i,'Bulk '+i,i===0?'2000-01-01 00:00:00':'2030-01-01 00:00:00');assert.equal((await req('products')).data.products.length,600);assert.equal((await req('products')).data.total,602);assert.equal((await req('products?q=Bulk%200')).data.products[0].id,'bulk0');
 console.log('PASS: marketplace permissions, CSRF, 10-photo limit, atomic/once-only 20-point listing charges, automatic categories, 600-item window and older search, free buyer requests, private requests, independent shop folders, promotion pricing and bonus-first debit, bank activation/idempotency, consent/interest deletion, social search, and 3-per-day ad cap.');
+
+// Cross-country marketplace isolation, overrides, pagination and shop access.
+sqlite.prepare("UPDATE profiles SET country='France' WHERE id='carol'").run();
+const beforeInternational=balance('carol');assert.equal((await req('product',{...product,id:'paris-product',countryCode:'FR',location:'Paris'},'carol')).status,200);assert.equal(balance('carol').balance+balance('carol').bonus,beforeInternational.balance+beforeInternational.bonus-20);
+assert.equal((await req('products',undefined,'carol')).data.country,'FR');assert.deepEqual((await req('products',undefined,'carol')).data.products.map(p=>p.id),['paris-product']);assert.ok((await req('products?country=*',undefined,'carol')).data.products.some(p=>p.seller==='alice'));assert.equal((await req('products?country=FR&q=Solar',undefined,'alice')).data.total,1);assert.equal((await req('products?country=FR&q=Solar&page=1',undefined,'alice')).data.products.length,0);
+assert.equal((await req('products?country=NG&shop=carol',undefined,'alice')).data.products[0].id,'paris-product');assert.equal((await req('product?id=paris-product',undefined,'alice')).status,200);assert.equal((await req('products?country=invalid')).status,400);
+identity={userId:'alice',isAdmin:false};const overseas=new Request('https://econect.test/api/market/products');Object.defineProperty(overseas,'cf',{value:{country:'FR'}});const local=await (await marketRoute(overseas)).json();assert.equal(local.country,'FR');assert.equal(local.countrySource,'current');assert.deepEqual(local.products.map(p=>p.id),['paris-product']);
+console.log('PASS: marketplace countries, connection-country precedence, global override, overseas shop access and listing debit are correct.');
+
 sqlite.close();delete globalThis.__marketTest;

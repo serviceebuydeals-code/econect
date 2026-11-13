@@ -1,3 +1,4 @@
+import {inlineGeography} from './test-geography.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import ts from 'typescript';
@@ -7,7 +8,7 @@ const db={prepare(sql){let vals=[];return{bind(...v){vals=v;return this},async f
 let identity=null;globalThis.__econectTest={env:{DB:db},getAuth:async()=>identity};
 let code=readFileSync('server/api.ts','utf8').replace("import{env}from'cloudflare:workers';import{getUser}from'./auth';","const env=globalThis.__econectTest.env;const getUser=globalThis.__econectTest.getAuth;");
 code=code.replace("import{getCoinPrice,coinAmount}from'./pricing';",readFileSync('server/pricing.ts','utf8').replace(/export /g,''));
-code=code.replace("import {youtubeVideo} from '../shared/youtube';",readFileSync('shared/youtube.ts','utf8').replace(/export /g,''));code=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+code=code.replace("import {youtubeVideo} from '../shared/youtube';",readFileSync('shared/youtube.ts','utf8').replace(/export /g,''));code=ts.transpileModule(inlineGeography(code),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
 const route=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
 async function request(path,body,user){identity=user?{userId:user,isAdmin:user==='admin',email:user==='admin'?'admin@example.test':user+'@test.invalid'}:null;const req=new Request('https://econect.test/api/'+path,body?{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://econect.test'},body:JSON.stringify(body)}:{});const r=await route[body?'POST':'GET'](req);return{status:r.status,data:await r.json()}}
 const form={surname:'Test',age:25,country:'Nigeria',state:'Lagos',city:'Lagos',originCountry:'Nigeria',originState:'Lagos'};
@@ -272,4 +273,12 @@ const mailKey='private/admin-mail/test/original.eml',mailURL='/api/media?key='+e
 sqlite.prepare("UPDATE conversations SET status='active' WHERE id=?").run(actorChat);
 sqlite.prepare("INSERT INTO messages(id,conversation,sender,kind,body) VALUES('mail-probe',?,'actortwo','text',?)").run(actorChat,mailURL);
 assert.equal((await request('media?key='+encodeURIComponent(mailKey)+'&conversation='+actorChat,undefined,'actortwo')).status,403);
+
+// International registrations retain their own country, region and city.
+for(const [user,country,state,city] of [['french','FR','Île-de-France','Paris'],['indian','India','Maharashtra','Mumbai'],['kenyan','KE','Nairobi','Nairobi'],['vatican','VA','','Vatican City']]){
+ const response=await request('signup',{...form,name:user,username:user,country,state,city,originCountry:country,originState:state},user);assert.equal(response.status,200,JSON.stringify(response.data));const profile=sqlite.prepare('SELECT country,state,city FROM profiles WHERE id=?').get(user);assert.equal(profile.city,city);assert.notEqual(profile.country,'Nigeria');assert.ok(profile.state);
+}
+assert.equal((await request('signup',{...form,name:'Bad',username:'invalidcountry',country:'not-a-country'},'invalidcountry')).status,400);
+console.log('PASS: international signup uses canonical countries and local cities, including countries without subdivisions.');
+
 sqlite.close();delete globalThis.__econectTest;

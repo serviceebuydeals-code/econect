@@ -1,0 +1,14 @@
+import {useEffect,useId,useState} from 'react';
+import {countryFor,countryList,countryName,subdivisionLabel} from '../shared/geography';
+import {t,useLocale} from './i18n';
+type Region={code:string;name:string};
+const cache=new Map<string,Promise<any>>();
+async function locations(path:string){if(!cache.has(path)){const promise=fetch('/api/locations/'+path).then(async r=>{if(!r.ok)throw Error('Location suggestions unavailable');return r.json()});cache.set(path,promise);promise.catch(()=>cache.delete(path))}return cache.get(path)!}
+function Fields({origin=false,detectedCountry}:{origin?:boolean;detectedCountry:string}){
+ const locale=useLocale(),listId=useId().replace(/:/g,''),[country,setCountry]=useState(()=>origin?'':countryFor(detectedCountry)?.code||''),[region,setRegion]=useState(''),[city,setCity]=useState(''),[regions,setRegions]=useState<Region[]>([]),[cities,setCities]=useState<string[]>([]);
+ useEffect(()=>{if(!origin&&!country&&countryFor(detectedCountry))setCountry(countryFor(detectedCountry)!.code)},[detectedCountry]);
+ useEffect(()=>{let live=true;setRegions([]);setCities([]);if(country)void locations('regions?country='+country).then(d=>{if(live)setRegions(d.regions)}).catch(()=>{});return()=>{live=false}},[country]);
+ useEffect(()=>{let live=true;setCities([]);const code=regions.find(r=>r.name===region)?.code;if(country&&(!regions.length||code))void locations('cities?country='+country+'&region='+encodeURIComponent(code||'')).then(d=>{if(live)setCities(d.cities)}).catch(()=>{});return()=>{live=false}},[country,region,regions]);
+ return <><label>{origin?t('Origin country'):t('Country of living')}<select name={origin?'originCountry':'country'} value={country} required onChange={e=>{setCountry(e.target.value);setRegion('');setCity('')}}><option value="">{t('Select country')}</option>{countryList.map(c=><option key={c.code} value={c.code}>{countryName(c.code,locale)}</option>)}</select></label><label>{origin?t('Origin region'):t(subdivisionLabel(country))}{!countryFor(country)?.regionCount&&' · '+t('Optional')}<input name={origin?'originState':'state'} value={region} maxLength={100} list={listId+'-regions'} required={!!countryFor(country)?.regionCount} autoComplete="address-level1" placeholder={t('Select state / region')} onChange={e=>{setRegion(e.target.value);setCity('')}}/><datalist id={listId+'-regions'}>{regions.map(r=><option key={r.code} value={r.name}/>)}</datalist></label>{!origin&&<label>{t('City')}<input name="city" value={city} maxLength={100} list={listId+'-cities'} autoComplete="address-level2" placeholder={t('Type your city')} required onChange={e=>setCity(e.target.value)}/><datalist id={listId+'-cities'}>{cities.map(c=><option value={c} key={c}/>)}</datalist></label>}</>;
+}
+export function RegistrationLocations({detectedCountry}:{detectedCountry:string}){return <><Fields detectedCountry={detectedCountry}/><Fields origin detectedCountry={detectedCountry}/></>}
