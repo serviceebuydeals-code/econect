@@ -14,7 +14,8 @@
       "/",
       "/api/*",
       "/tv/*",
-      "/shop/*"
+      "/shop/*",
+      "/product/*"
     ]
   },
   "d1_databases": [

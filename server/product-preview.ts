@@ -1,9 +1,10 @@
+import {productIdFromLocation,productHref} from '../shared/product-link';
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export async function productPreview(request:Request,env:Cloudflare.Env):Promise<Response>{
- const url=new URL(request.url),id=url.searchParams.get('product')||'';
+ const url=new URL(request.url),id=productIdFromLocation(url);
  const product=await env.DB.prepare('SELECT name,description,images FROM market_products WHERE id=? AND active=1').bind(id).first<any>();
  const base=await env.ASSETS.fetch(new Request(url.origin+'/',request));
- const canonical=new URL('/',url.origin);canonical.searchParams.set('product',id);
+ const canonical=new URL(productHref(id),url.origin);
  let image='';try{const images=JSON.parse(product?.images||'[]');if(Array.isArray(images)&&typeof images[0]==='string'){const first=new URL(images[0],url.origin);if(first.origin===url.origin&&first.pathname==='/api/media'&&first.searchParams.get('key')?.startsWith('public/'))image=first.href}}catch{}
  const title=product?String(product.name)+' · eConect':'Product unavailable · eConect',description=product?(String(product.description||'').replace(/\s+/g,' ').trim().slice(0,240)||'View this product on eConect.'):'This product is no longer available.';
  const meta=(property:string,value:string)=>'<meta property="'+property+'" content="'+escape(value)+'"/>';
