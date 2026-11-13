@@ -15,6 +15,6 @@ export function ChatReplyPreview({message,author,cancel,jump}:{message:ReplyMess
 export function ReplyableMessage({id,own,onReply,children}:{id:string;own:boolean;onReply:()=>void;children:ReactNode}){
  const callback=useRef(onReply);callback.current=onReply;const gesture=useRef<ReturnType<typeof createReplyGesture>|null>(null);if(!gesture.current)gesture.current=createReplyGesture(()=>callback.current());useEffect(()=>()=>gesture.current?.cancel(),[]);
  return <div id={'chat-message-'+id} className={'message-bubble '+(own?'own':'')} onPointerDown={e=>{if(e.isPrimary&&e.button===0)gesture.current!.start(e.clientX,e.clientY)}} onPointerMove={e=>gesture.current!.move(e.clientX,e.clientY)} onPointerUp={e=>gesture.current!.end(e.clientX,e.clientY)} onPointerCancel={()=>gesture.current!.cancel()} onContextMenu={e=>{e.preventDefault();gesture.current!.context()}} onClickCapture={e=>{if(gesture.current!.consumeClick()){e.preventDefault();e.stopPropagation()}}}>
- {children}<button type="button" className="message-reply-action" aria-label="Reply to this message" title="Reply" onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onReply()}}><CornerUpLeft size={14}/></button>
+ {children}
  </div>;
 }
