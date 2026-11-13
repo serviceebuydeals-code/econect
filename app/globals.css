@@ -75,3 +75,5 @@
 .message-input textarea{display:block;flex:1;min-width:0;width:0;min-height:42px;max-height:120px;overflow-y:auto;overscroll-behavior:contain;resize:none;border:1px solid #e0e7da;border-radius:7px;background:#f8faf4;padding:11px 9px;font:inherit;font-size:12px;line-height:19px;white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin}.message-input{align-items:flex-end}
 
 @media(max-width:760px){.bottom-nav.conversation-hidden{display:none}}
+
+@media(max-width:760px){.topbar.conversation-hidden{display:none}.mobile-conversation .chat-header{padding-top:max(12px,env(safe-area-inset-top))}}
