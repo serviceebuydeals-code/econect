@@ -16,18 +16,22 @@ export async function marketRoute(r:Request):Promise<Response>{try{
   if(path==='categories')return Response.json(await all('SELECT * FROM market_categories ORDER BY admin_created DESC,name'));
   if(path==='products'){
    const term=clean(url.searchParams.get('q'),150),shop=clean(url.searchParams.get('shop')),folder=clean(url.searchParams.get('folder')),page=Math.max(0,Math.min(100000,Number(url.searchParams.get('page'))||0));
+   const category=clean(url.searchParams.get('category'),100),subcategory=clean(url.searchParams.get('subcategory'),100),prefix=clean(url.searchParams.get('prefix'),150);
+   if(category&&!await one('SELECT id FROM market_categories WHERE id=? AND parent IS NULL',category))error('Choose a valid category.');
+   if(subcategory&&(!category||!await one('SELECT id FROM market_categories WHERE id=? AND parent=?',subcategory,category)))error('Choose a subcategory of this category.');
    const profile=uid?await one('SELECT country FROM profiles WHERE id=?',uid):null,detected=requestCountry(r),registered=countryFor(profile?.country),requested=url.searchParams.get('country')||'auto';
    const selected=requested==='*'?null:requested==='auto'?preferredMarketCountry(r,profile?.country):countryFor(requested);
    if(requested!=='*'&&requested!=='auto'&&!selected)error('Choose a valid country.');
    const countrySource=requested==='*'?'all':requested!=='auto'?'selected':detected?'current':registered?'profile':'all';
    const clauses=['m.active=1'],args:any[]=[];if(!shop&&selected){clauses.push(listingCountrySQL+'=?');args.push(selected.code)}
 if(shop){clauses.push('p.username=? COLLATE NOCASE');args.push(shop)}if(folder){clauses.push('m.folder=?');args.push(folder)}
+   if(category){clauses.push('m.category=?');args.push(category)}if(subcategory){clauses.push('m.subcategory=?');args.push(subcategory)}if(prefix){clauses.push("m.name LIKE ? ESCAPE '\\'");args.push(like(prefix).slice(1))}
    if(term){clauses.push("(m.name LIKE ? ESCAPE '\\' OR m.description LIKE ? ESCAPE '\\' OR c.name LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')");args.push(...Array(4).fill(like(term)))}
-   const where=' WHERE '+clauses.join(' AND '),limit=shop||term?60:600,offset=shop||term?page*limit:0;
-   const products=await all(productSQL+where+' ORDER BY m.created DESC,m.rowid DESC LIMIT ? OFFSET ?',...args,limit,offset);
+   const filtered=!!(shop||term||category||prefix),where=' WHERE '+clauses.join(' AND '),limit=filtered?60:600,offset=filtered?page*limit:0;
+   const products=await all(productSQL+where+(category||prefix?' ORDER BY m.name COLLATE NOCASE,m.rowid DESC':' ORDER BY m.created DESC,m.rowid DESC')+' LIMIT ? OFFSET ?',...args,limit,offset);
    const count=await one('SELECT count(*) total FROM market_products m JOIN profiles p ON p.id=m.seller JOIN market_categories c ON c.id=m.category LEFT JOIN market_categories s ON s.id=m.subcategory'+where,...args);
    const owner=shop?await one('SELECT p.id,p.username,p.name,p.surname,p.avatar,p.bio,COALESCE(s.phone,\'\') phone FROM profiles p LEFT JOIN market_shops s ON s.seller=p.id WHERE p.username=? COLLATE NOCASE',shop):null;
-   return Response.json({products,country:selected?.code||'',countrySource,detectedCountry:detected?.code||'',profileCountry:registered?.code||'',total:count.total,hasMore:!!(shop||term)&&offset+products.length<count.total,owner,folders:owner?await all("SELECT f.*,(SELECT images FROM market_products WHERE folder=f.id AND active=1 ORDER BY created DESC,rowid DESC LIMIT 1) images FROM market_folders f WHERE seller=? ORDER BY created DESC",owner.id):[]});
+   return Response.json({products,country:selected?.code||'',countrySource,detectedCountry:detected?.code||'',profileCountry:registered?.code||'',total:count.total,hasMore:filtered&&offset+products.length<count.total,owner,folders:owner?await all("SELECT f.*,(SELECT images FROM market_products WHERE folder=f.id AND active=1 ORDER BY created DESC,rowid DESC LIMIT 1) images FROM market_folders f WHERE seller=? ORDER BY created DESC",owner.id):[]});
   }
   if(path==='product'){const p=await one(productSQL+' WHERE m.id=? AND m.active=1',url.searchParams.get('id'));if(!p)error('Product unavailable.',404);return Response.json(p)}
   if(path==='suggestions'){

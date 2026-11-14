@@ -57,4 +57,16 @@ assert.equal((await req('products?country=NG&shop=carol',undefined,'alice')).dat
 identity={userId:'alice',isAdmin:false};const overseas=new Request('https://econect.test/api/market/products');Object.defineProperty(overseas,'cf',{value:{country:'FR'}});const local=await (await marketRoute(overseas)).json();assert.equal(local.country,'FR');assert.equal(local.countrySource,'current');assert.deepEqual(local.products.map(p=>p.id),['paris-product']);
 console.log('PASS: marketplace countries, connection-country precedence, global override, overseas shop access and listing debit are correct.');
 
+
+
+// Country-scoped category browsing, exact subcategories, prefix matching and pagination.
+sqlite.prepare("INSERT INTO market_categories(id,name,parent) VALUES('test-phones','Test phones','electronics')").run();
+for(const [i,name] of ['Alpha Phone','alphabet Device','10W Charger','20W Charger','100% Adapter','_Under Adapter','Metal Alpha','% Off Cable'].entries())assert.equal((await req('product',{...product,id:'category-fixture-'+i,name,category:'electronics',subcategory:'test-phones',countryCode:'NG'},'alice')).status,200);
+const beforeBrowse=balance('alice');
+let categoryRows=(await req('products?category=electronics&subcategory=test-phones&prefix=al',undefined,'alice')).data;assert.deepEqual(categoryRows.products.map(p=>p.name),['Alpha Phone','alphabet Device']);assert.equal(categoryRows.total,2);
+categoryRows=(await req('products?category=electronics&prefix=1',undefined,'alice')).data;assert.deepEqual(categoryRows.products.map(p=>p.name),['100% Adapter','10W Charger']);
+assert.equal((await req('products?category=home&prefix=Alpha',undefined,'alice')).data.total,0);assert.equal((await req('products?category=electronics&subcategory=test-phones&prefix=%25',undefined,'alice')).data.total,1);assert.equal((await req('products?category=electronics&subcategory=test-phones&prefix=_',undefined,'alice')).data.total,1);assert.equal((await req('products?category=electronics&subcategory=test-phones&prefix=Alpha&country=FR',undefined,'alice')).data.total,0);
+assert.equal((await req('products?category=invalid')).status,400);assert.equal((await req('products?category=home&subcategory=test-phones')).status,400);assert.equal((await req('products?subcategory=test-phones')).status,400);
+const categoryPage=(await req('products?category=electronics&prefix=Bulk',undefined,'alice')).data,nextCategoryPage=(await req('products?category=electronics&prefix=Bulk&page=1',undefined,'alice')).data;assert.equal(categoryPage.products.length,60);assert.equal(categoryPage.total,601);assert.equal(categoryPage.hasMore,true);assert.equal(nextCategoryPage.products.length,60);assert.ok(!categoryPage.products.some(p=>nextCategoryPage.products.some(next=>next.id===p.id)));assert.deepEqual(balance('alice'),beforeBrowse);
+console.log('PASS: country-scoped main/subcategory filters, alphabetical/numeric name prefixes, literal wildcard escaping, invalid-category rejection, pagination and free browsing.');
 sqlite.close();delete globalThis.__marketTest;
